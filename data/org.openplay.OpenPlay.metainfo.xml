@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.openplay.OpenPlay</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>OpenPlay</name>
+  <summary>Cast your screen to any device on your network</summary>
+
+  <description>
+    <p>
+      OpenPlay is a modern, secure screen casting system for Linux.
+      Cast your entire screen to any OpenPlay receiver on your local network
+      with minimal latency using hardware-accelerated encoding and WebRTC transport.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Zero-configuration discovery via mDNS</li>
+      <li>Hardware-accelerated H.264 encoding (VA-API, NVENC)</li>
+      <li>Low-latency WebRTC transport with DTLS-SRTP encryption</li>
+      <li>Wayland native with PipeWire capture</li>
+      <li>No cloud, no accounts — pure LAN</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.openplay.OpenPlay.desktop</launchable>
+
+  <url type="homepage">https://github.com/openplay-project/openplay</url>
+  <url type="bugtracker">https://github.com/openplay-project/openplay/issues</url>
+
+  <developer id="org.openplay">
+    <name>OpenPlay Project</name>
+  </developer>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#62a0ea</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <releases>
+    <release version="0.1.0" date="2026-03-04">
+      <description>
+        <p>Initial development release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

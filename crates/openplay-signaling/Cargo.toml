@@ -1,0 +1,21 @@
+[package]
+name = "openplay-signaling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebSocket signaling server and client for OpenPlay"
+
+[dependencies]
+openplay-common = { workspace = true }
+openplay-protocol = { workspace = true }
+openplay-crypto = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+rustls = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+tokio-rustls = "0.26"

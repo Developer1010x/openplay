@@ -1,0 +1,30 @@
+[package]
+name = "openplay-sender"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OpenPlay sender application — cast your screen"
+
+[[bin]]
+name = "openplay-sender"
+path = "src/main.rs"
+
+[dependencies]
+openplay-common = { workspace = true }
+openplay-protocol = { workspace = true }
+openplay-crypto = { workspace = true }
+openplay-discovery = { workspace = true }
+openplay-capture = { workspace = true }
+openplay-pipeline = { workspace = true }
+openplay-signaling = { workspace = true }
+openplay-airplay = { workspace = true }
+openplay-miracast = { workspace = true }
+gtk4 = { workspace = true }
+libadwaita = { workspace = true }
+glib = { version = "0.20", features = ["v2_76"] }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

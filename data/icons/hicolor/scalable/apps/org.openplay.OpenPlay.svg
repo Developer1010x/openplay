@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3584e4"/>
+      <stop offset="100%" stop-color="#1a5fb4"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="url(#bg)"/>
+  <!-- Screen/monitor shape -->
+  <rect x="28" y="30" width="72" height="48" rx="4" fill="white" opacity="0.95"/>
+  <rect x="32" y="34" width="64" height="40" rx="2" fill="#1a5fb4"/>
+  <!-- Stand -->
+  <rect x="52" y="78" width="24" height="4" rx="1" fill="white" opacity="0.95"/>
+  <rect x="44" y="82" width="40" height="3" rx="1.5" fill="white" opacity="0.95"/>
+  <!-- Play/cast symbol -->
+  <polygon points="50,46 50,66 68,56" fill="white" opacity="0.9"/>
+  <!-- Signal waves -->
+  <path d="M 78 42 Q 86 42 86 50" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+  <path d="M 78 36 Q 94 36 94 54" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+</svg>

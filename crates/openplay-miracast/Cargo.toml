@@ -1,0 +1,19 @@
+[package]
+name = "openplay-miracast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Miracast/WFD protocol implementation for OpenPlay"
+
+[dependencies]
+openplay-common = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+
+# Wi-Fi Direct discovery (Phase 4)
+zbus = { workspace = true }
+futures-util = { workspace = true }

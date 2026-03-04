@@ -1,0 +1,20 @@
+[package]
+name = "openplay-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GStreamer pipeline construction and management for OpenPlay"
+
+[dependencies]
+openplay-common = { workspace = true }
+openplay-protocol = { workspace = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
+gstreamer-webrtc = { workspace = true }
+gstreamer-sdp = { workspace = true }
+gstreamer-pbutils = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

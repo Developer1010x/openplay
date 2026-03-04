@@ -1,0 +1,13 @@
+[package]
+name = "openplay-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Screen and audio capture abstraction via portals for OpenPlay"
+
+[dependencies]
+openplay-common = { workspace = true }
+ashpd = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,36 @@
+mod airplay_sender_pipeline;
+mod encoder;
+mod miracast_sender_pipeline;
+mod receiver_pipeline;
+mod sender_pipeline;
+
+pub use airplay_sender_pipeline::AirPlaySenderPipeline;
+pub use encoder::{probe_best_encoder, EncoderType};
+pub use miracast_sender_pipeline::MiracastSenderPipeline;
+pub use receiver_pipeline::ReceiverPipeline;
+pub use sender_pipeline::SenderPipeline;
+
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum PipelineError {
+    #[error("GStreamer error: {0}")]
+    Gstreamer(String),
+
+    #[error("No suitable encoder found")]
+    NoEncoder,
+
+    #[error("Pipeline element not found: {0}")]
+    MissingElement(String),
+
+    #[error("Pipeline state change failed: {0}")]
+    StateChange(String),
+
+    #[error("SDP error: {0}")]
+    Sdp(String),
+}
+
+/// Initializes GStreamer. Must be called before any pipeline operations.
+pub fn init() -> Result<(), PipelineError> {
+    gstreamer::init().map_err(|e| PipelineError::Gstreamer(e.to_string()))
+}

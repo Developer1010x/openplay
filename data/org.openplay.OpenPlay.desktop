@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=OpenPlay
+Comment=Cast your screen to any OpenPlay receiver on the network
+Exec=openplay-sender
+Icon=org.openplay.OpenPlay
+Terminal=false
+Type=Application
+Categories=Network;Video;GTK;
+Keywords=screen;cast;mirror;airplay;stream;
+StartupNotify=true

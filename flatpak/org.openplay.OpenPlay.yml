@@ -1,0 +1,36 @@
+app-id: org.openplay.OpenPlay
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: openplay-sender
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --share=network
+  - --share=ipc
+  - --device=dri
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --talk-name=org.freedesktop.portal.Background
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+
+modules:
+  - name: openplay
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --verbose
+      - install -Dm755 target/release/openplay-sender /app/bin/openplay-sender
+      - install -Dm755 target/release/openplay-receiver /app/bin/openplay-receiver
+      - install -Dm644 data/org.openplay.OpenPlay.desktop /app/share/applications/org.openplay.OpenPlay.desktop
+      - install -Dm644 data/org.openplay.OpenPlay.metainfo.xml /app/share/metainfo/org.openplay.OpenPlay.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg /app/share/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg
+    sources:
+      - type: dir
+        path: ..

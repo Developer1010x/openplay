@@ -1,0 +1,7 @@
+// Allow OpenPlay to access wpa_supplicant D-Bus for Wi-Fi Direct (Miracast)
+// Install to: /etc/polkit-1/rules.d/10-openplay-wpa.rules
+polkit.addRule(function(action, subject) {
+    if (action.id == "fi.w1.wpa_supplicant1" && subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});

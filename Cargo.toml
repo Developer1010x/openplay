@@ -1,0 +1,109 @@
+[workspace]
+members = [
+    "crates/openplay-common",
+    "crates/openplay-protocol",
+    "crates/openplay-discovery",
+    "crates/openplay-crypto",
+    "crates/openplay-capture",
+    "crates/openplay-pipeline",
+    "crates/openplay-signaling",
+    "crates/openplay-airplay",
+    "crates/openplay-miracast",
+    "crates/openplay-sender",
+    "crates/openplay-receiver",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/openplay-project/openplay"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Internal crates
+openplay-common = { path = "crates/openplay-common" }
+openplay-protocol = { path = "crates/openplay-protocol" }
+openplay-discovery = { path = "crates/openplay-discovery" }
+openplay-crypto = { path = "crates/openplay-crypto" }
+openplay-capture = { path = "crates/openplay-capture" }
+openplay-pipeline = { path = "crates/openplay-pipeline" }
+openplay-signaling = { path = "crates/openplay-signaling" }
+openplay-airplay = { path = "crates/openplay-airplay" }
+openplay-miracast = { path = "crates/openplay-miracast" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+plist = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+
+# Crypto / TLS
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["pem"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+aes = "0.8"
+ctr = "0.9"
+cipher = "0.4"
+num-bigint = { version = "0.4", features = ["rand"] }
+num-integer = "0.1"
+num-traits = "0.2"
+rand = "0.8"
+base64 = "0.22"
+
+# Discovery
+mdns-sd = "0.11"
+
+# Storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# GStreamer
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+gstreamer-video = "0.23"
+gstreamer-webrtc = "0.23"
+gstreamer-sdp = "0.23"
+gstreamer-pbutils = "0.23"
+
+# GTK
+gtk4 = "0.10"
+libadwaita = { version = "0.8", features = ["v1_4"] }
+
+# Portal
+ashpd = { version = "0.12", features = ["gtk4"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config / CLI
+directories = "5"
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# D-Bus
+zbus = "5"
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+bytes = "1"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
