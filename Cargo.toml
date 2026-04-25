@@ -77,12 +77,15 @@ gstreamer-webrtc = "0.23"
 gstreamer-sdp = "0.23"
 gstreamer-pbutils = "0.23"
 
-# GTK
-gtk4 = "0.10"
-libadwaita = { version = "0.8", features = ["v1_4"] }
+# Cross-platform GUI
+egui = "0.29"
+eframe = { version = "0.29", default-features = true }
 
-# Portal
-ashpd = { version = "0.12", features = ["gtk4"] }
+# Portal (Linux only — declared here so crates can reference it as workspace dep)
+ashpd = { version = "0.12", features = ["tokio"] }
+
+# D-Bus (Linux only — for Wi-Fi Direct via wpa_supplicant)
+zbus = "5"
 
 # Logging
 tracing = "0.1"
@@ -95,9 +98,6 @@ clap = { version = "4", features = ["derive"] }
 # Error handling
 thiserror = "2"
 anyhow = "1"
-
-# D-Bus
-zbus = "5"
 
 # Misc
 uuid = { version = "1", features = ["v4"] }

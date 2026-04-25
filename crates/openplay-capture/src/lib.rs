@@ -1,6 +1,16 @@
+/// Platform-specific capture implementations.
+#[cfg(target_os = "linux")]
 mod portal;
 
+#[cfg(not(target_os = "linux"))]
+mod desktop;
+
+// Re-export the platform-appropriate CaptureSession and helpers.
+#[cfg(target_os = "linux")]
 pub use portal::{CaptureSession, CaptureSource, SessionType};
+
+#[cfg(not(target_os = "linux"))]
+pub use desktop::{CaptureSession, CaptureSource, SessionType};
 
 use thiserror::Error;
 
@@ -17,14 +27,24 @@ pub enum CaptureError {
 
     #[error("Session type not supported: {0}")]
     UnsupportedSession(String),
+
+    #[error("Platform capture error: {0}")]
+    Platform(String),
 }
 
-/// Detects the current display session type.
+/// Detects the current display session type (Linux only; returns Unknown on other platforms).
 pub fn detect_session_type() -> SessionType {
-    match std::env::var("XDG_SESSION_TYPE").as_deref() {
-        Ok("wayland") => SessionType::Wayland,
-        Ok("x11") => SessionType::X11,
-        _ => SessionType::Unknown,
+    #[cfg(target_os = "linux")]
+    {
+        match std::env::var("XDG_SESSION_TYPE").as_deref() {
+            Ok("wayland") => SessionType::Wayland,
+            Ok("x11") => SessionType::X11,
+            _ => SessionType::Unknown,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        SessionType::Native
     }
 }
 
@@ -34,7 +54,6 @@ mod tests {
 
     #[test]
     fn test_detect_session_type_returns_value() {
-        // Just verify it doesn't panic — actual result depends on environment
         let _session_type = detect_session_type();
     }
 }

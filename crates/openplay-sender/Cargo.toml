@@ -3,7 +3,7 @@ name = "openplay-sender"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "OpenPlay sender application — cast your screen"
+description = "OpenPlay sender — cast your screen to AirPlay, Miracast, or OpenPlay receivers"
 
 [[bin]]
 name = "openplay-sender"
@@ -19,9 +19,8 @@ openplay-pipeline = { workspace = true }
 openplay-signaling = { workspace = true }
 openplay-airplay = { workspace = true }
 openplay-miracast = { workspace = true }
-gtk4 = { workspace = true }
-libadwaita = { workspace = true }
-glib = { version = "0.20", features = ["v2_76"] }
+egui = { workspace = true }
+eframe = { workspace = true }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 tokio = { workspace = true }

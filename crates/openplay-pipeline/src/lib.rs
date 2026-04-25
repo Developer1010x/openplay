@@ -1,10 +1,12 @@
 mod airplay_sender_pipeline;
+mod capture_config;
 mod encoder;
 mod miracast_sender_pipeline;
 mod receiver_pipeline;
 mod sender_pipeline;
 
 pub use airplay_sender_pipeline::AirPlaySenderPipeline;
+pub use capture_config::CaptureConfig;
 pub use encoder::{probe_best_encoder, EncoderType};
 pub use miracast_sender_pipeline::MiracastSenderPipeline;
 pub use receiver_pipeline::ReceiverPipeline;

@@ -4,10 +4,16 @@ use std::net::SocketAddr;
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::features::AirPlayFeatures;
 use crate::AirPlayError;
+
+/// AirPlay client version string — must match a known AirPlay version to avoid
+/// rejection by third-party receivers (LG TVs, Samsung TVs, NOVO boards, etc.).
+const AIRPLAY_USER_AGENT: &str = "AirPlay/550.10";
+/// Device name advertised to the receiver.
+const OPENPLAY_DEVICE_NAME: &str = "OpenPlay";
 
 /// Result of AirPlay HTTP negotiation.
 pub struct NegotiatedStream {
@@ -20,7 +26,7 @@ pub struct NegotiatedStream {
 /// Parsed server info from AirPlay GET /info response.
 #[derive(Debug, Clone)]
 pub struct ServerInfo {
-    /// Device model (e.g. "AppleTV5,3").
+    /// Device model (e.g. "AppleTV5,3", "LG Smart TV", etc.).
     pub model: String,
     /// Device name.
     pub device_name: String,
@@ -48,6 +54,11 @@ impl Default for ServerInfo {
 ///
 /// 1. GET /info — query capabilities
 /// 2. POST /stream — send binary plist with mirror parameters, transitions connection to raw binary
+///
+/// Includes proper AirPlay headers required by third-party receivers (LG, Samsung, NOVO boards).
+/// The mirroring capability check is lenient: if the device returns features=0 or unknown,
+/// we proceed anyway rather than rejecting — many commercial and education displays don't
+/// populate the features bitmask correctly.
 pub async fn negotiate(
     addr: SocketAddr,
     width: u32,
@@ -62,15 +73,24 @@ pub async fn negotiate(
     info!(%addr, "Connected to AirPlay receiver");
 
     // Step 1: GET /info
-    let server_info = get_info(&mut stream).await?;
+    let server_info = get_info(&mut stream, session_id).await?;
     info!(
         model = %server_info.model,
         name = %server_info.device_name,
+        features = server_info.features.raw(),
         "AirPlay receiver info"
     );
 
-    if !server_info.features.supports_mirroring() {
-        return Err(AirPlayError::MirroringNotSupported);
+    // Lenient mirroring check: only reject if features are explicitly non-zero AND
+    // mirroring is absent. Many third-party receivers (LG, NOVO, etc.) return features=0
+    // or skip the /info response body entirely — we should still attempt mirroring.
+    if server_info.features.raw() != 0 && !server_info.features.supports_mirroring() {
+        warn!(
+            model = %server_info.model,
+            features = server_info.features.raw(),
+            "Receiver does not report mirroring support (bit 7 unset) — \
+             attempting anyway as this is common with third-party AirPlay devices"
+        );
     }
 
     // Step 2: POST /stream
@@ -82,9 +102,16 @@ pub async fn negotiate(
     })
 }
 
-/// Sends GET /info and parses the binary plist response.
-async fn get_info(stream: &mut TcpStream) -> Result<ServerInfo, AirPlayError> {
-    let request = "GET /info HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+/// Sends GET /info with proper AirPlay headers and parses the binary plist response.
+async fn get_info(stream: &mut TcpStream, session_id: &str) -> Result<ServerInfo, AirPlayError> {
+    let request = format!(
+        "GET /info HTTP/1.1\r\n\
+         User-Agent: {AIRPLAY_USER_AGENT}\r\n\
+         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Session-ID: {session_id}\r\n\
+         X-Apple-ProtocolVersion: 1\r\n\
+         Content-Length: 0\r\n\r\n"
+    );
     stream
         .write_all(request.as_bytes())
         .await
@@ -96,7 +123,7 @@ async fn get_info(stream: &mut TcpStream) -> Result<ServerInfo, AirPlayError> {
     parse_info_response(&body)
 }
 
-/// Sends POST /stream with binary plist body.
+/// Sends POST /stream with binary plist body and proper AirPlay headers.
 async fn post_stream(
     stream: &mut TcpStream,
     width: u32,
@@ -129,7 +156,13 @@ async fn post_stream(
         .map_err(|e| AirPlayError::Plist(format!("Failed to encode plist: {e}")))?;
 
     let request = format!(
-        "POST /stream HTTP/1.1\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
+        "POST /stream HTTP/1.1\r\n\
+         User-Agent: {AIRPLAY_USER_AGENT}\r\n\
+         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Session-ID: {session_id}\r\n\
+         X-Apple-ProtocolVersion: 1\r\n\
+         Content-Type: application/x-apple-binary-plist\r\n\
+         Content-Length: {}\r\n\r\n",
         body.len()
     );
 
@@ -184,10 +217,12 @@ async fn read_http_response(stream: &mut TcpStream) -> Result<(String, Vec<u8>),
 
     // Body starts after \r\n\r\n
     let body_start = header_end + 4;
-    let already_read = buf.len() - body_start;
+    let already_read = buf.len().saturating_sub(body_start);
 
     let mut body = Vec::with_capacity(content_length);
-    body.extend_from_slice(&buf[body_start..]);
+    if body_start < buf.len() {
+        body.extend_from_slice(&buf[body_start..]);
+    }
 
     // Read remaining body
     if already_read < content_length {
@@ -209,7 +244,9 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 
 fn parse_content_length(headers: &str) -> Option<usize> {
     for line in headers.lines() {
-        if let Some(val) = line.strip_prefix("Content-Length:").or_else(|| line.strip_prefix("content-length:")) {
+        if let Some(val) = line.strip_prefix("Content-Length:")
+            .or_else(|| line.strip_prefix("content-length:"))
+        {
             return val.trim().parse().ok();
         }
     }
@@ -223,11 +260,19 @@ pub fn parse_info_response_pub(body: &[u8]) -> Result<ServerInfo, AirPlayError> 
 
 fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
     if body.is_empty() {
+        // Many third-party AirPlay receivers (LG, NOVO, etc.) return empty /info bodies.
+        // Return a default ServerInfo rather than failing — we still try to mirror.
+        debug!("GET /info returned empty body — using default ServerInfo (third-party device)");
         return Ok(ServerInfo::default());
     }
 
-    let value: plist::Value = plist::from_bytes(body)
-        .map_err(|e| AirPlayError::Plist(format!("Failed to parse /info plist: {e}")))?;
+    let value: plist::Value = match plist::from_bytes(body) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to parse /info plist: {e} — using default ServerInfo");
+            return Ok(ServerInfo::default());
+        }
+    };
 
     let dict = value
         .as_dictionary()
@@ -242,7 +287,6 @@ fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
 
     let features_str = get_str("features");
     let features = if features_str.is_empty() {
-        // Try numeric features field
         dict.get("features")
             .and_then(|v| v.as_unsigned_integer())
             .map(|v| AirPlayFeatures::parse(&format!("0x{v:X}")))
@@ -253,9 +297,42 @@ fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
 
     Ok(ServerInfo {
         model: get_str("model"),
-        device_name: get_str("deviceName").to_string(),
+        device_name: get_str("deviceName"),
         features,
         source_version: get_str("sourceVersion"),
         mac_address: get_str("macAddress"),
     })
+}
+
+/// Sends a GET /info request with AirPlay headers and returns raw headers + body.
+/// Used by the auth flow in session.rs.
+pub async fn get_info_raw(
+    stream: &mut TcpStream,
+    session_id: &str,
+) -> Result<(String, Vec<u8>), AirPlayError> {
+    let request = format!(
+        "GET /info HTTP/1.1\r\n\
+         User-Agent: {AIRPLAY_USER_AGENT}\r\n\
+         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Session-ID: {session_id}\r\n\
+         X-Apple-ProtocolVersion: 1\r\n\
+         Content-Length: 0\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| AirPlayError::Http(format!("Failed to send GET /info: {e}")))?;
+    read_http_response(stream).await
+}
+
+/// Sends POST /stream with AirPlay headers on an already-open stream.
+/// Used by the auth flow after pair-verify.
+pub async fn post_stream_on(
+    stream: &mut TcpStream,
+    width: u32,
+    height: u32,
+    fps: u32,
+    session_id: &str,
+) -> Result<(), AirPlayError> {
+    post_stream(stream, width, height, fps, session_id).await
 }

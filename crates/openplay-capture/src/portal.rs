@@ -1,3 +1,6 @@
+// This module is Linux-only — screen capture via XDG Desktop Portal + PipeWire.
+#![cfg(target_os = "linux")]
+
 use crate::CaptureError;
 use tracing::{debug, info};
 

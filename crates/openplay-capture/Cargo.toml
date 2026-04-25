@@ -3,11 +3,14 @@ name = "openplay-capture"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Screen and audio capture abstraction via portals for OpenPlay"
+description = "Screen capture abstraction for OpenPlay — portal on Linux, native APIs elsewhere"
 
 [dependencies]
 openplay-common = { workspace = true }
-ashpd = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+
+# XDG Desktop Portal (PipeWire-backed screen capture) — Linux only
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { workspace = true }

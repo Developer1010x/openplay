@@ -1,12 +1,11 @@
 mod app;
 mod casting;
 mod receiver_list;
-mod window;
 
 use clap::Parser;
 use tracing::info;
 
-/// OpenPlay Sender — Cast your screen to any OpenPlay, AirPlay, or Miracast receiver.
+/// OpenPlay — Cast your screen to any AirPlay, Miracast, or OpenPlay receiver.
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
@@ -23,9 +22,8 @@ fn main() -> anyhow::Result<()> {
     openplay_common::init_logging();
     let args = Args::parse();
 
-    info!("OpenPlay Sender starting");
+    info!("OpenPlay starting");
 
-    // Initialize GStreamer early (required before any pipeline operations)
     openplay_pipeline::init()?;
     info!("GStreamer initialized");
 
@@ -40,6 +38,18 @@ fn main() -> anyhow::Result<()> {
 
     openplay_common::ensure_dirs()?;
 
-    let exit_code = app::run(config);
-    std::process::exit(exit_code);
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("OpenPlay")
+            .with_inner_size([440.0, 580.0])
+            .with_min_inner_size([360.0, 480.0]),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "OpenPlay",
+        native_options,
+        Box::new(|cc| Ok(Box::new(app::SenderApp::new(cc, config)))),
+    )
+    .map_err(|e| anyhow::anyhow!("GUI error: {e}"))
 }

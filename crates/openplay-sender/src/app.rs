@@ -1,382 +1,623 @@
-use std::rc::Rc;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
+use std::sync::mpsc as std_mpsc;
 
-use gtk4 as gtk;
-use gtk::prelude::*;
-use libadwaita as adw;
+use egui::{Color32, RichText, ScrollArea, Vec2};
 use openplay_common::AppConfig;
 use openplay_discovery::{AirPlayBrowser, DiscoveryEvent, MiracastBrowser, ReceiverBrowser};
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::casting;
+use crate::casting::{CastStopHandle, start_airplay_cast, start_miracast_cast};
 use crate::receiver_list::{DiscoveredReceiver, MiracastMode, MiracastReceiver, Protocol};
-use crate::window::SenderWindow;
 
-const APP_ID: &str = "org.openplay.Sender";
+// ─── App state ────────────────────────────────────────────────────────────────
 
-/// Runs the GTK4 application and returns the exit code.
-pub fn run(config: AppConfig) -> i32 {
-    // Create tokio runtime for async networking (AirPlay sessions, etc.)
-    let tokio_rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime");
-    let tokio_handle = tokio_rt.handle().clone();
+pub struct SenderApp {
+    // Config
+    config: AppConfig,
+    // Tokio runtime for async networking
+    tokio_rt: tokio::runtime::Runtime,
 
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .build();
+    // Discovery
+    event_rx: std_mpsc::Receiver<DiscoveryEvent>,
+    receivers: HashMap<String, DiscoveredReceiver>,
+    receiver_keys: Vec<String>, // ordered
 
-    app.connect_activate(move |app| {
-        let window = Rc::new(SenderWindow::new(app, &config));
+    // Selection
+    selected_key: Option<String>,
 
-        // Start discovery browsers
-        let (merged_tx, merged_rx) = mpsc::channel::<DiscoveryEvent>(64);
+    // Casting state
+    status: String,
+    is_casting: bool,
+    stop_handle: Option<CastStopHandle>,
+    status_rx: std_mpsc::Receiver<String>,
+    status_tx: std_mpsc::SyncSender<String>,
 
-        // OpenPlay browser
+    // Dialogs
+    show_add_airplay: bool,
+    airplay_name: String,
+    airplay_ip: String,
+    airplay_port: String,
+
+    show_add_miracast: bool,
+    miracast_name: String,
+    miracast_addr: String,
+    miracast_is_p2p: bool,
+}
+
+impl SenderApp {
+    pub fn new(_cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
+        let tokio_rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime");
+
+        // Merge all discovery events into one sync channel
+        let (event_tx, event_rx) = std_mpsc::sync_channel::<DiscoveryEvent>(128);
+        let (status_tx, status_rx) = std_mpsc::sync_channel::<String>(32);
+
+        // Start OpenPlay mDNS browser
         match ReceiverBrowser::start() {
-            Ok((_browser, mut openplay_rx)) => {
-                let tx = merged_tx.clone();
-                glib::spawn_future_local(async move {
-                    while let Some(event) = openplay_rx.recv().await {
-                        if tx.send(event).await.is_err() {
-                            break;
-                        }
+            Ok((_browser, mut rx)) => {
+                let tx = event_tx.clone();
+                tokio_rt.spawn(async move {
+                    while let Some(e) = rx.recv().await {
+                        let _ = tx.send(e);
                     }
                 });
                 info!("OpenPlay browser started");
             }
-            Err(e) => {
-                warn!("Failed to start OpenPlay browser: {e}");
-            }
+            Err(e) => warn!("OpenPlay browser failed: {e}"),
         }
 
-        // AirPlay browser (if enabled)
+        // Start AirPlay mDNS browser
         if config.airplay_enabled {
             match AirPlayBrowser::start() {
-                Ok((_browser, mut airplay_rx)) => {
-                    let tx = merged_tx.clone();
-                    glib::spawn_future_local(async move {
-                        while let Some(event) = airplay_rx.recv().await {
-                            if tx.send(event).await.is_err() {
-                                break;
-                            }
+                Ok((_browser, mut rx)) => {
+                    let tx = event_tx.clone();
+                    tokio_rt.spawn(async move {
+                        while let Some(e) = rx.recv().await {
+                            let _ = tx.send(e);
                         }
                     });
                     info!("AirPlay browser started");
                 }
-                Err(e) => {
-                    warn!("Failed to start AirPlay browser: {e}");
-                }
+                Err(e) => warn!("AirPlay browser failed: {e}"),
             }
         }
 
-        // Miracast MICE browser (if enabled) — auto-detects Miracast displays on the network
+        // Start Miracast mDNS browser
         if config.miracast_enabled {
             match MiracastBrowser::start() {
-                Ok((_browser, mut miracast_rx)) => {
-                    let tx = merged_tx.clone();
-                    glib::spawn_future_local(async move {
-                        while let Some(event) = miracast_rx.recv().await {
-                            if tx.send(event).await.is_err() {
-                                break;
-                            }
+                Ok((_browser, mut rx)) => {
+                    let tx = event_tx.clone();
+                    tokio_rt.spawn(async move {
+                        while let Some(e) = rx.recv().await {
+                            let _ = tx.send(e);
                         }
                     });
-                    info!("Miracast MICE browser started — auto-detecting displays");
+                    info!("Miracast browser started (all service types)");
                 }
-                Err(e) => {
-                    warn!("Failed to start Miracast MICE browser: {e}");
-                }
+                Err(e) => warn!("Miracast browser failed: {e}"),
             }
         }
 
-        // Miracast Wi-Fi Direct discovery (if enabled)
+        // Start Wi-Fi Direct discovery (Linux only)
+        #[cfg(target_os = "linux")]
         if config.miracast_enabled {
-            let window_for_wfd = window.clone();
-            let handle_for_wfd = tokio_handle.clone();
-            glib::spawn_future_local(async move {
-                match handle_for_wfd.spawn(async {
-                    openplay_miracast::wifi_direct::WifiDirectManager::start().await
-                }).await {
-                    Ok(Ok((_manager, mut events))) => {
-                        info!("Wi-Fi Direct discovery started for Miracast");
-                        while let Some(event) = events.recv().await {
-                            match event {
-                                openplay_miracast::wifi_direct::WifiDirectEvent::PeerFound(peer) => {
-                                    let receiver = DiscoveredReceiver::Miracast(MiracastReceiver {
-                                        display_name: peer.name.clone(),
-                                        mode: MiracastMode::WifiDirect {
-                                            device_address: peer.device_address.clone(),
+            let tx = event_tx.clone();
+            tokio_rt.spawn(async move {
+                match openplay_miracast::wifi_direct::WifiDirectManager::start().await {
+                    Ok((_mgr, mut events)) => {
+                        info!("Wi-Fi Direct discovery started");
+                        while let Some(ev) = events.recv().await {
+                            use openplay_miracast::wifi_direct::WifiDirectEvent;
+                            match ev {
+                                WifiDirectEvent::PeerFound(peer) => {
+                                    let _ = tx.send(DiscoveryEvent::MiracastReceiverFound(
+                                        openplay_discovery::MiracastReceiverInfo {
+                                            name: format!("miracast-p2p-{}", peer.device_address),
+                                            display_name: peer.name.clone(),
+                                            addresses: vec![],
+                                            port: 7236,
+                                            device_info: peer.device_address.clone(),
                                         },
-                                    });
-                                    window_for_wfd.add_receiver(&receiver);
+                                    ));
                                 }
-                                openplay_miracast::wifi_direct::WifiDirectEvent::PeerLost { device_address } => {
-                                    window_for_wfd.remove_receiver(&format!("miracast-p2p-{device_address}"));
+                                WifiDirectEvent::PeerLost { device_address } => {
+                                    let _ = tx.send(DiscoveryEvent::MiracastReceiverLost {
+                                        name: format!("miracast-p2p-{device_address}"),
+                                    });
                                 }
                                 _ => {}
                             }
                         }
                     }
-                    Ok(Err(e)) => {
-                        warn!("Wi-Fi Direct discovery not available: {e}");
-                    }
-                    Err(e) => {
-                        warn!("Wi-Fi Direct discovery task failed: {e}");
-                    }
+                    Err(e) => warn!("Wi-Fi Direct not available: {e}"),
                 }
             });
         }
 
-        // Process merged discovery events
-        let window_for_discovery = window.clone();
-        glib::spawn_future_local(async move {
-            let mut rx = merged_rx;
-            while let Some(event) = rx.recv().await {
-                match event {
-                    DiscoveryEvent::ReceiverFound(info) => {
-                        let receiver = DiscoveredReceiver::OpenPlay(info);
-                        window_for_discovery.add_receiver(&receiver);
-                    }
-                    DiscoveryEvent::ReceiverLost { name } => {
-                        window_for_discovery.remove_receiver(&name);
-                    }
-                    DiscoveryEvent::AirPlayReceiverFound(info) => {
-                        let receiver = DiscoveredReceiver::AirPlay(info);
-                        window_for_discovery.add_receiver(&receiver);
-                    }
-                    DiscoveryEvent::AirPlayReceiverLost { name } => {
-                        window_for_discovery.remove_receiver(&name);
-                    }
-                    DiscoveryEvent::MiracastReceiverFound(info) => {
-                        // Convert MICE discovery info to our receiver model
-                        let addr = info
-                            .addresses
-                            .first()
-                            .copied()
-                            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-                        let receiver = DiscoveredReceiver::Miracast(MiracastReceiver {
-                            display_name: info.display_name,
-                            mode: MiracastMode::Infrastructure {
-                                addr,
-                                port: info.port,
-                            },
-                        });
-                        window_for_discovery.add_receiver(&receiver);
-                    }
-                    DiscoveryEvent::MiracastReceiverLost { name } => {
-                        window_for_discovery.remove_receiver(&name);
-                    }
+        Self {
+            config,
+            tokio_rt,
+            event_rx,
+            receivers: HashMap::new(),
+            receiver_keys: Vec::new(),
+            selected_key: None,
+            status: "Searching for receivers...".to_string(),
+            is_casting: false,
+            stop_handle: None,
+            status_rx,
+            status_tx,
+            show_add_airplay: false,
+            airplay_name: String::new(),
+            airplay_ip: String::new(),
+            airplay_port: "7000".to_string(),
+            show_add_miracast: false,
+            miracast_name: String::new(),
+            miracast_addr: String::new(),
+            miracast_is_p2p: false,
+        }
+    }
+
+    fn poll_discovery(&mut self) {
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                DiscoveryEvent::ReceiverFound(info) => {
+                    let r = DiscoveredReceiver::OpenPlay(info);
+                    self.add_receiver(r);
                 }
-            }
-        });
-
-        // Wire up cast button
-        let window_for_cast = window.clone();
-        let handle = tokio_handle.clone();
-        let cast_config = config.clone();
-        window.cast_button().connect_clicked(move |_| {
-            let Some(receiver) = window_for_cast.selected_receiver() else {
-                window_for_cast.set_status("No receiver selected");
-                return;
-            };
-
-            info!(
-                name = receiver.display_name(),
-                protocol = receiver.protocol_label(),
-                "Cast button clicked"
-            );
-
-            // Common setup: switch to casting state and create stop handle
-            window_for_cast.set_casting_state();
-            let stop_handle = window_for_cast.create_stop_handle();
-
-            let handle = handle.clone();
-            let bitrate = cast_config.max_bitrate_kbps;
-            let fps = cast_config.framerate;
-
-            // Status callback — updates UI and resets on completion/error
-            let window_for_status = window_for_cast.clone();
-            let make_status_cb = move || {
-                let w = window_for_status.clone();
-                move |status: &str| {
-                    let status = status.to_string();
-                    let w = w.clone();
-                    glib::idle_add_local_once(move || {
-                        w.set_status(&status);
-                        let s = status.to_lowercase();
-                        if s.contains("failed") || s.contains("error")
-                            || s.contains("ended") || s.contains("stopped")
-                        {
-                            w.set_idle_state();
-                        }
-                    });
+                DiscoveryEvent::ReceiverLost { name } => self.remove_receiver(&name),
+                DiscoveryEvent::AirPlayReceiverFound(info) => {
+                    let r = DiscoveredReceiver::AirPlay(info);
+                    self.add_receiver(r);
                 }
-            };
-
-            match receiver.protocol() {
-                Protocol::AirPlay => {
-                    let Some(addr) = receiver.addr() else {
-                        window_for_cast.set_status("No address for receiver");
-                        window_for_cast.set_idle_state();
-                        return;
+                DiscoveryEvent::AirPlayReceiverLost { name } => self.remove_receiver(&name),
+                DiscoveryEvent::MiracastReceiverFound(info) => {
+                    let addr = info.addresses.first().copied()
+                        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+                    // Check if device_info looks like a MAC (Wi-Fi Direct) or IP
+                    let mode = if info.device_info.contains(':') && info.device_info.len() == 17 {
+                        MiracastMode::WifiDirect { device_address: info.device_info.clone() }
+                    } else {
+                        MiracastMode::Infrastructure { addr, port: info.port }
                     };
+                    let r = DiscoveredReceiver::Miracast(MiracastReceiver {
+                        display_name: info.display_name,
+                        mode,
+                    });
+                    self.add_receiver(r);
+                }
+                DiscoveryEvent::MiracastReceiverLost { name } => self.remove_receiver(&name),
+            }
+        }
+    }
 
-                    window_for_cast.set_status("Starting screen capture...");
-                    let status_cb = make_status_cb();
+    fn poll_status(&mut self) {
+        while let Ok(msg) = self.status_rx.try_recv() {
+            let done = msg.to_lowercase().contains("ended")
+                || msg.to_lowercase().contains("failed")
+                || msg.to_lowercase().contains("stopped")
+                || msg.to_lowercase().contains("error");
+            self.status = msg;
+            if done {
+                self.is_casting = false;
+                self.stop_handle = None;
+            }
+        }
+    }
 
-                    glib::spawn_future_local(async move {
-                        casting::start_airplay_cast(
-                            addr, bitrate, fps, handle, stop_handle, status_cb,
-                        ).await;
+    fn add_receiver(&mut self, r: DiscoveredReceiver) {
+        let key = r.key();
+        if !self.receivers.contains_key(&key) {
+            self.receiver_keys.push(key.clone());
+            self.receivers.insert(key, r);
+        }
+    }
+
+    fn remove_receiver(&mut self, key: &str) {
+        if self.receivers.remove(key).is_some() {
+            self.receiver_keys.retain(|k| k != key);
+            if self.selected_key.as_deref() == Some(key) {
+                self.selected_key = None;
+            }
+        }
+    }
+
+    fn start_cast(&mut self, receiver: DiscoveredReceiver) {
+        let bitrate = self.config.max_bitrate_kbps;
+        let fps = self.config.framerate;
+        let handle = self.tokio_rt.handle().clone();
+        let stop = CastStopHandle::new();
+        self.stop_handle = Some(stop.clone());
+        self.is_casting = true;
+        self.status = "Starting capture...".to_string();
+
+        let tx = self.status_tx.clone();
+        let status_cb = move |msg: &str| {
+            let _ = tx.send(msg.to_string());
+        };
+
+        match receiver.protocol() {
+            Protocol::AirPlay => {
+                if let Some(addr) = receiver.addr() {
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(start_airplay_cast(addr, bitrate, fps, handle, stop, status_cb));
                     });
                 }
-                Protocol::OpenPlay => {
-                    window_for_cast.set_status("OpenPlay casting not yet wired up");
-                    window_for_cast.set_idle_state();
-                }
-                Protocol::Miracast => {
-                    if receiver.is_wifi_direct() {
-                        let Some(mac) = receiver.wifi_direct_address() else {
-                            window_for_cast.set_status("No P2P address for receiver");
-                            window_for_cast.set_idle_state();
-                            return;
-                        };
-                        window_for_cast.set_status("Connecting via Wi-Fi Direct...");
+            }
+            Protocol::Miracast => {
+                if receiver.is_wifi_direct() {
+                    #[cfg(target_os = "linux")]
+                    if let Some(mac) = receiver.wifi_direct_address() {
                         let mac = mac.to_string();
-                        let status_cb = make_status_cb();
-                        glib::spawn_future_local(async move {
-                            casting::start_miracast_p2p_cast(
-                                &mac, bitrate, fps, handle, stop_handle, status_cb,
-                            ).await;
-                        });
-                    } else {
-                        let Some(addr) = receiver.addr() else {
-                            window_for_cast.set_status("No address for Miracast receiver");
-                            window_for_cast.set_idle_state();
-                            return;
-                        };
-                        window_for_cast.set_status("Starting Miracast...");
-                        let status_cb = make_status_cb();
-                        glib::spawn_future_local(async move {
-                            casting::start_miracast_cast(
-                                addr.ip(), bitrate, fps, handle, stop_handle, status_cb,
-                            ).await;
+                        let tx2 = self.status_tx.clone();
+                        let stop2 = self.stop_handle.clone().unwrap();
+                        std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap();
+                            rt.block_on(crate::casting::start_miracast_p2p_cast(
+                                &mac, bitrate, fps, handle, stop2,
+                                move |m| { let _ = tx2.send(m.to_string()); }
+                            ));
                         });
                     }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        self.status = "Wi-Fi Direct P2P is only available on Linux".to_string();
+                        self.is_casting = false;
+                    }
+                } else if let Some(addr) = receiver.addr() {
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(start_miracast_cast(
+                            addr.ip(), bitrate, fps, handle, stop, status_cb,
+                        ));
+                    });
                 }
             }
+            Protocol::OpenPlay => {
+                self.status = "OpenPlay WebRTC casting: connecting...".to_string();
+                // TODO: implement OpenPlay WebRTC casting path
+                self.is_casting = false;
+            }
+        }
+    }
+
+    fn stop_cast(&mut self) {
+        if let Some(h) = &self.stop_handle {
+            h.stop();
+        }
+        self.status = "Stopping...".to_string();
+    }
+}
+
+// ─── egui App impl ─────────────────────────────────────────────────────────────
+
+impl eframe::App for SenderApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_discovery();
+        self.poll_status();
+
+        // Always repaint while casting (to pick up status updates)
+        if self.is_casting {
+            ctx.request_repaint();
+        }
+
+        // ── Top panel (title bar) ──────────────────────────────────────────────
+        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.heading(RichText::new("OpenPlay").strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("● {}", self.config.display_name))
+                            .small()
+                            .color(Color32::GRAY),
+                    );
+                });
+            });
+            ui.add_space(4.0);
         });
 
-        // Wire up "Add Miracast Receiver" button — supports MICE (IP) and P2P (MAC)
-        let window_for_miracast = window.clone();
-        window.add_miracast_button().connect_clicked(move |_| {
-            let dialog = gtk::Dialog::builder()
-                .title("Add Miracast Receiver")
-                .transient_for(window_for_miracast.gtk_window())
-                .modal(true)
-                .build();
-
-            dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-            dialog.add_button("Add", gtk::ResponseType::Accept);
-
-            let content_area = dialog.content_area();
-            content_area.set_spacing(12);
-            content_area.set_margin_start(20);
-            content_area.set_margin_end(20);
-            content_area.set_margin_top(12);
-            content_area.set_margin_bottom(12);
-
-            let name_entry = gtk::Entry::builder()
-                .placeholder_text("Display Name (e.g. Living Room TV)")
-                .text("Miracast Receiver")
-                .build();
-
-            // Mode selector: Infrastructure (IP) or Wi-Fi Direct (MAC)
-            let mode_label = gtk::Label::builder()
-                .label("Connection Mode:")
-                .halign(gtk::Align::Start)
-                .build();
-
-            let mode_combo = gtk::ComboBoxText::new();
-            mode_combo.append_text("Wi-Fi (IP Address)");
-            mode_combo.append_text("Wi-Fi Direct (MAC Address)");
-            mode_combo.set_active(Some(0));
-
-            let addr_entry = gtk::Entry::builder()
-                .placeholder_text("IP Address (e.g. 192.168.0.100)")
-                .build();
-
-            // Update placeholder based on mode
-            let addr_entry_for_mode = addr_entry.clone();
-            mode_combo.connect_changed(move |combo| {
-                if combo.active() == Some(1) {
-                    addr_entry_for_mode.set_placeholder_text(Some("MAC Address (e.g. AA:BB:CC:DD:EE:FF)"));
+        // ── Status bar (bottom) ───────────────────────────────────────────────
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if self.is_casting {
+                    ui.spinner();
+                    ui.label(RichText::new(&self.status).color(Color32::from_rgb(100, 200, 100)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                RichText::new("⏹ Stop Casting").color(Color32::from_rgb(255, 80, 80)),
+                            ))
+                            .clicked()
+                        {
+                            self.stop_cast();
+                        }
+                    });
                 } else {
-                    addr_entry_for_mode.set_placeholder_text(Some("IP Address (e.g. 192.168.0.100)"));
+                    ui.label(RichText::new(&self.status).color(Color32::GRAY).small());
                 }
             });
+            ui.add_space(4.0);
+        });
 
-            content_area.append(&gtk::Label::builder().label("Name:").halign(gtk::Align::Start).build());
-            content_area.append(&name_entry);
-            content_area.append(&mode_label);
-            content_area.append(&mode_combo);
-            content_area.append(&gtk::Label::builder().label("Address:").halign(gtk::Align::Start).build());
-            content_area.append(&addr_entry);
+        // ── Main panel ────────────────────────────────────────────────────────
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // Receiver list header + add buttons
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Available Receivers").strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("+ Miracast IP").clicked() {
+                        self.show_add_miracast = true;
+                    }
+                    if ui.small_button("+ AirPlay IP").clicked() {
+                        self.show_add_airplay = true;
+                    }
+                });
+            });
+            ui.separator();
 
-            let w = window_for_miracast.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == gtk::ResponseType::Accept {
-                    let addr_text = addr_entry.text().to_string().trim().to_string();
-                    let name_text = name_entry.text().to_string();
-                    let display_name = if name_text.is_empty() { addr_text.clone() } else { name_text };
-                    let is_p2p = mode_combo.active() == Some(1);
+            // Receiver list
+            if self.receiver_keys.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Scanning for receivers...").color(Color32::GRAY));
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "Supports: AirPlay (Apple TV, LG, Samsung, NOVO)\n\
+                             Miracast (NOVO Pro, LG CreateBoard, ViewSonic)\n\
+                             OpenPlay (native, free)",
+                        )
+                        .small()
+                        .color(Color32::DARK_GRAY),
+                    );
+                });
+            } else {
+                ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                    let keys: Vec<_> = self.receiver_keys.clone();
+                    for key in &keys {
+                        let Some(receiver) = self.receivers.get(key) else { continue };
+                        let selected = self.selected_key.as_deref() == Some(key);
+                        let (proto_label, proto_color) = protocol_badge(receiver.protocol());
 
-                    if is_p2p {
-                        // Wi-Fi Direct mode — MAC address
-                        if addr_text.len() >= 11 && addr_text.contains(':') {
-                            let receiver = DiscoveredReceiver::Miracast(MiracastReceiver {
-                                display_name,
-                                mode: MiracastMode::WifiDirect { device_address: addr_text.clone() },
+                        let response = egui::Frame::none()
+                            .fill(if selected {
+                                Color32::from_rgb(40, 80, 140)
+                            } else {
+                                Color32::from_gray(30)
+                            })
+                            .rounding(6.0)
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new(receiver.display_name()).strong(),
+                                        );
+                                        ui.label(
+                                            RichText::new(receiver_subtitle(receiver))
+                                                .small()
+                                                .color(Color32::GRAY),
+                                        );
+                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(proto_label)
+                                                    .small()
+                                                    .color(proto_color),
+                                            );
+                                        },
+                                    );
+                                });
                             });
-                            w.add_receiver(&receiver);
-                            info!(mac = %addr_text, "Added P2P Miracast receiver");
-                        } else {
-                            w.set_status("Invalid MAC address (e.g. AA:BB:CC:DD:EE:FF)");
+
+                        if response.response.interact(egui::Sense::click()).clicked() {
+                            self.selected_key = Some(key.clone());
                         }
+                        ui.add_space(3.0);
+                    }
+                });
+            }
+
+            ui.add_space(16.0);
+
+            // Cast button
+            if !self.is_casting {
+                let can_cast = self.selected_key.is_some();
+                ui.vertical_centered(|ui| {
+                    let btn = egui::Button::new(
+                        RichText::new("▶  Start Casting")
+                            .size(16.0)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(if can_cast {
+                        Color32::from_rgb(40, 140, 60)
                     } else {
-                        // Infrastructure mode — IP address
-                        if let Ok(ip) = addr_text.parse::<std::net::IpAddr>() {
-                            let receiver = DiscoveredReceiver::Miracast(MiracastReceiver {
-                                display_name,
-                                mode: MiracastMode::Infrastructure { addr: ip, port: 7236 },
-                            });
-                            w.add_receiver(&receiver);
-                            info!(ip = %addr_text, "Added MICE Miracast receiver");
-                        } else {
-                            w.set_status("Invalid IP address");
+                        Color32::DARK_GRAY
+                    })
+                    .min_size(Vec2::new(200.0, 42.0));
+
+                    if ui.add_enabled(can_cast, btn).clicked() {
+                        if let Some(key) = &self.selected_key.clone() {
+                            if let Some(receiver) = self.receivers.get(key).cloned() {
+                                self.start_cast(receiver);
+                            }
                         }
                     }
-                }
-                dialog.close();
+                });
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+
+            // Settings summary
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Bitrate: {} kbps   FPS: {}",
+                        self.config.max_bitrate_kbps, self.config.framerate
+                    ))
+                    .small()
+                    .color(Color32::DARK_GRAY),
+                );
             });
-
-            dialog.present();
         });
 
-        // Wire up stop button — signals the active cast to stop
-        let window_for_stop = window.clone();
-        window.stop_button().connect_clicked(move |_| {
-            window_for_stop.set_status("Stopping...");
-            window_for_stop.stop_casting();
-            info!("Stop button clicked — signaling cast to stop");
-        });
+        // ── Add AirPlay IP dialog ─────────────────────────────────────────────
+        if self.show_add_airplay {
+            egui::Window::new("Add AirPlay Receiver")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Name:");
+                    ui.text_edit_singleline(&mut self.airplay_name);
+                    ui.label("IP Address:");
+                    ui.text_edit_singleline(&mut self.airplay_ip);
+                    ui.label("Port:");
+                    ui.text_edit_singleline(&mut self.airplay_port);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Add").clicked() {
+                            if let Ok(ip) = IpAddr::from_str(&self.airplay_ip) {
+                                let port: u16 = self.airplay_port.parse().unwrap_or(7000);
+                                let name = if self.airplay_name.is_empty() {
+                                    self.airplay_ip.clone()
+                                } else {
+                                    self.airplay_name.clone()
+                                };
+                                let receiver = DiscoveredReceiver::AirPlay(
+                                    openplay_discovery::AirPlayReceiverInfo {
+                                        name: format!("manual-airplay-{ip}"),
+                                        display_name: name,
+                                        addresses: vec![ip],
+                                        port,
+                                        device_id: String::new(),
+                                        features: String::new(),
+                                        model: "Manual".to_string(),
+                                    },
+                                );
+                                self.add_receiver(receiver);
+                                info!(ip = %ip, port, "Added manual AirPlay receiver");
+                            } else {
+                                self.status = "Invalid IP address".to_string();
+                            }
+                            self.show_add_airplay = false;
+                            self.airplay_name.clear();
+                            self.airplay_ip.clear();
+                            self.airplay_port = "7000".to_string();
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.show_add_airplay = false;
+                        }
+                    });
+                });
+        }
 
-        window.present();
-    });
+        // ── Add Miracast IP dialog ────────────────────────────────────────────
+        if self.show_add_miracast {
+            egui::Window::new("Add Miracast Receiver")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Name:");
+                    ui.text_edit_singleline(&mut self.miracast_name);
+                    ui.checkbox(&mut self.miracast_is_p2p, "Wi-Fi Direct (MAC address)");
+                    ui.label(if self.miracast_is_p2p {
+                        "MAC Address (AA:BB:CC:DD:EE:FF):"
+                    } else {
+                        "IP Address:"
+                    });
+                    ui.text_edit_singleline(&mut self.miracast_addr);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Add").clicked() {
+                            let name = if self.miracast_name.is_empty() {
+                                self.miracast_addr.clone()
+                            } else {
+                                self.miracast_name.clone()
+                            };
+                            if self.miracast_is_p2p {
+                                if self.miracast_addr.len() >= 11 && self.miracast_addr.contains(':') {
+                                    let r = DiscoveredReceiver::Miracast(MiracastReceiver {
+                                        display_name: name,
+                                        mode: MiracastMode::WifiDirect {
+                                            device_address: self.miracast_addr.clone(),
+                                        },
+                                    });
+                                    self.add_receiver(r);
+                                } else {
+                                    self.status = "Invalid MAC address".to_string();
+                                }
+                            } else if let Ok(ip) = IpAddr::from_str(&self.miracast_addr) {
+                                let r = DiscoveredReceiver::Miracast(MiracastReceiver {
+                                    display_name: name,
+                                    mode: MiracastMode::Infrastructure { addr: ip, port: 7236 },
+                                });
+                                self.add_receiver(r);
+                                info!(ip = %ip, "Added manual Miracast receiver");
+                            } else {
+                                self.status = "Invalid IP address".to_string();
+                            }
+                            self.show_add_miracast = false;
+                            self.miracast_name.clear();
+                            self.miracast_addr.clear();
+                            self.miracast_is_p2p = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.show_add_miracast = false;
+                        }
+                    });
+                });
+        }
+    }
+}
 
-    // Keep tokio runtime alive for the lifetime of the app
-    let _rt_guard = tokio_rt;
-    app.run().into()
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+fn protocol_badge(protocol: Protocol) -> (&'static str, Color32) {
+    match protocol {
+        Protocol::OpenPlay => ("OpenPlay", Color32::from_rgb(80, 160, 255)),
+        Protocol::AirPlay => ("AirPlay", Color32::from_rgb(80, 200, 120)),
+        Protocol::Miracast => ("Miracast", Color32::from_rgb(255, 180, 60)),
+    }
+}
+
+fn receiver_subtitle(receiver: &DiscoveredReceiver) -> String {
+    match receiver {
+        DiscoveredReceiver::OpenPlay(r) => {
+            let addr = r.addresses.first().map(|a| a.to_string()).unwrap_or_default();
+            format!("{addr}:{}", r.port)
+        }
+        DiscoveredReceiver::AirPlay(r) => {
+            let addr = r.addresses.first().map(|a| a.to_string()).unwrap_or_default();
+            if r.model.is_empty() || r.model == "Manual" {
+                addr
+            } else {
+                format!("{} — {addr}:{}", r.model, r.port)
+            }
+        }
+        DiscoveredReceiver::Miracast(r) => match &r.mode {
+            MiracastMode::Infrastructure { addr, port } => format!("{addr}:{port}"),
+            MiracastMode::WifiDirect { device_address } => format!("P2P {device_address}"),
+        },
+    }
 }

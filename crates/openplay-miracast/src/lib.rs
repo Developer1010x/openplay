@@ -1,6 +1,10 @@
 pub mod rtsp_server;
 pub mod session;
 pub mod wfd_params;
+
+/// Wi-Fi Direct P2P discovery via wpa_supplicant D-Bus.
+/// Only available on Linux where wpa_supplicant is present.
+#[cfg(target_os = "linux")]
 pub mod wifi_direct;
 
 use thiserror::Error;

@@ -14,6 +14,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
 
-# Wi-Fi Direct discovery (Phase 4)
+# Wi-Fi Direct discovery via wpa_supplicant D-Bus — Linux only
+[target.'cfg(target_os = "linux")'.dependencies]
 zbus = { workspace = true }
 futures-util = { workspace = true }

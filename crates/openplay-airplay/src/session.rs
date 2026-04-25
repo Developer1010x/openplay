@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
@@ -195,16 +195,12 @@ async fn negotiate_with_auth(
     fps: u32,
     session_id: &str,
 ) -> Result<http_session::NegotiatedStream, AirPlayError> {
-    // Step 1: Reconnect and GET /info to check device type
+    // Step 1: Reconnect and GET /info to check device type (with proper AirPlay headers).
     let mut stream = TcpStream::connect(receiver_addr)
         .await
         .map_err(|e| AirPlayError::Connection(format!("Failed to connect: {e}")))?;
 
-    let request = "GET /info HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
-    stream.write_all(request.as_bytes()).await
-        .map_err(|e| AirPlayError::Http(format!("Write failed: {e}")))?;
-
-    let (_headers, body) = read_http_response_simple(&mut stream).await?;
+    let (_headers, body) = http_session::get_info_raw(&mut stream, session_id).await?;
     let server_info = http_session::parse_info_response_pub(&body)?;
     drop(stream); // Close the info connection
 
@@ -239,37 +235,8 @@ async fn negotiate_with_auth(
 
     info!("Pair-verify succeeded, sending POST /stream");
 
-    // Step 5: POST /stream on the verified connection
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("width".to_string(), plist::Value::Integer(width.into()));
-    params.insert("height".to_string(), plist::Value::Integer(height.into()));
-    params.insert("fps".to_string(), plist::Value::Integer(fps.into()));
-    params.insert("overscanned".to_string(), plist::Value::Boolean(false));
-    params.insert("refreshRate".to_string(), plist::Value::Real(fps as f64));
-    params.insert("sessionID".to_string(), plist::Value::String(session_id.to_string()));
-    params.insert("version".to_string(), plist::Value::String("1.0".to_string()));
-
-    let plist_value = plist::Value::Dictionary(params.into_iter().collect());
-    let mut body = Vec::new();
-    plist_value.to_writer_binary(&mut body)
-        .map_err(|e| AirPlayError::Plist(format!("Plist encode failed: {e}")))?;
-
-    let request = format!(
-        "POST /stream HTTP/1.1\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
-        body.len()
-    );
-    verified_stream.write_all(request.as_bytes()).await
-        .map_err(|e| AirPlayError::Http(format!("Write failed: {e}")))?;
-    verified_stream.write_all(&body).await
-        .map_err(|e| AirPlayError::Http(format!("Write body failed: {e}")))?;
-
-    let (status, _) = read_http_response_simple(&mut verified_stream).await?;
-    if !status.contains("200") {
-        return Err(AirPlayError::Negotiation(format!(
-            "POST /stream failed after pairing: {status}"
-        )));
-    }
-
+    // Step 5: POST /stream on the verified connection (with proper AirPlay headers)
+    http_session::post_stream_on(&mut verified_stream, width, height, fps, session_id).await?;
     info!("POST /stream accepted after HAP pairing — mirror stream active");
 
     Ok(http_session::NegotiatedStream {

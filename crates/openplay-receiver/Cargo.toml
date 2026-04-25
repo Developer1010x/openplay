@@ -3,7 +3,7 @@ name = "openplay-receiver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "OpenPlay receiver application — display incoming screen casts"
+description = "OpenPlay receiver — display incoming screen casts"
 
 [[bin]]
 name = "openplay-receiver"
@@ -16,9 +16,10 @@ openplay-crypto = { workspace = true }
 openplay-discovery = { workspace = true }
 openplay-pipeline = { workspace = true }
 openplay-signaling = { workspace = true }
-gtk4 = { workspace = true }
-libadwaita = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true }
 gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
