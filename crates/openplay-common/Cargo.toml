@@ -15,3 +15,6 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
 gethostname = "0.5"
+
+[dev-dependencies]
+tempfile = { workspace = true }
