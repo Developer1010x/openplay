@@ -1,8 +1,24 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::error::OpenPlayError;
 use crate::paths::config_dir;
 use crate::DEFAULT_PORT;
+
+/// Lowest video bitrate (kbps) that produces a usable stream.
+pub const MIN_BITRATE_KBPS: u32 = 100;
+
+/// Upper sanity bound for the configured video bitrate (kbps).
+///
+/// 100 Mbps is far above anything a screen-cast pipeline needs and almost
+/// always indicates a typo (e.g. bytes mistaken for kbps).
+pub const MAX_BITRATE_KBPS: u32 = 100_000;
+
+/// Lowest framerate that still produces motion most users would accept.
+pub const MIN_FRAMERATE: u32 = 1;
+
+/// Upper sanity bound for the configured framerate.
+pub const MAX_FRAMERATE: u32 = 240;
 
 /// Application configuration, loaded from `config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +76,63 @@ impl AppConfig {
         let contents = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&contents)?;
         Ok(config)
+    }
+
+    /// Loads config from the default path and validates it.
+    ///
+    /// Unlike [`AppConfig::load`], this rejects a config whose values fall
+    /// outside the supported ranges instead of silently passing them on to
+    /// the pipeline. Returns an [`OpenPlayError::Config`] describing the first
+    /// invalid field.
+    pub fn load_validated() -> Result<Self, OpenPlayError> {
+        let path = config_dir().join("config.toml");
+        Self::load_validated_from(&path)
+    }
+
+    /// Loads config from a specific path and validates it.
+    pub fn load_validated_from(path: &Path) -> Result<Self, OpenPlayError> {
+        let config = Self::load_from(path).map_err(|e| OpenPlayError::Config(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Checks that every field holds a value the rest of the system can use.
+    ///
+    /// This guards against typos in a hand-edited `config.toml` (an empty
+    /// display name, a bitrate of zero, an absurd framerate, …) that would
+    /// otherwise surface as a confusing failure deep inside the GStreamer
+    /// pipeline. Returns the first problem found as an
+    /// [`OpenPlayError::Config`].
+    pub fn validate(&self) -> Result<(), OpenPlayError> {
+        if self.display_name.trim().is_empty() {
+            return Err(OpenPlayError::Config(
+                "display_name must not be empty".to_string(),
+            ));
+        }
+
+        // Port 0 means "any port" to the OS, which makes a receiver
+        // undiscoverable in practice — require an explicit port.
+        if self.port == 0 {
+            return Err(OpenPlayError::Config(
+                "port must be between 1 and 65535".to_string(),
+            ));
+        }
+
+        if !(MIN_BITRATE_KBPS..=MAX_BITRATE_KBPS).contains(&self.max_bitrate_kbps) {
+            return Err(OpenPlayError::Config(format!(
+                "max_bitrate_kbps must be between {MIN_BITRATE_KBPS} and {MAX_BITRATE_KBPS}, got {}",
+                self.max_bitrate_kbps
+            )));
+        }
+
+        if !(MIN_FRAMERATE..=MAX_FRAMERATE).contains(&self.framerate) {
+            return Err(OpenPlayError::Config(format!(
+                "framerate must be between {MIN_FRAMERATE} and {MAX_FRAMERATE}, got {}",
+                self.framerate
+            )));
+        }
+
+        Ok(())
     }
 
     /// Saves config to `$XDG_CONFIG_HOME/openplay/config.toml`.

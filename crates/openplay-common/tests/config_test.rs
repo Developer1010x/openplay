@@ -105,6 +105,84 @@ fn error_from_io() {
 }
 
 #[test]
+fn default_config_is_valid() {
+    assert!(AppConfig::default().validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_empty_display_name() {
+    let mut cfg = AppConfig::default();
+    cfg.display_name = "   ".to_string();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("display_name"));
+}
+
+#[test]
+fn validate_rejects_zero_port() {
+    let mut cfg = AppConfig::default();
+    cfg.port = 0;
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_out_of_range_bitrate() {
+    let mut cfg = AppConfig::default();
+    cfg.max_bitrate_kbps = 0;
+    assert!(cfg.validate().is_err());
+
+    cfg.max_bitrate_kbps = openplay_common::MAX_BITRATE_KBPS + 1;
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_out_of_range_framerate() {
+    let mut cfg = AppConfig::default();
+    cfg.framerate = 0;
+    assert!(cfg.validate().is_err());
+
+    cfg.framerate = openplay_common::MAX_FRAMERATE + 1;
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_accepts_boundary_values() {
+    let mut cfg = AppConfig::default();
+    cfg.max_bitrate_kbps = openplay_common::MIN_BITRATE_KBPS;
+    cfg.framerate = openplay_common::MIN_FRAMERATE;
+    cfg.port = 1;
+    assert!(cfg.validate().is_ok());
+
+    cfg.max_bitrate_kbps = openplay_common::MAX_BITRATE_KBPS;
+    cfg.framerate = openplay_common::MAX_FRAMERATE;
+    cfg.port = u16::MAX;
+    assert!(cfg.validate().is_ok());
+}
+
+#[test]
+fn load_validated_from_rejects_bad_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(
+        &path,
+        b"display_name = \"X\"\nport = 7290\nmax_bitrate_kbps = 0\nframerate = 30\n\
+          force_sw_encode = false\nairplay_enabled = true\nmiracast_enabled = true\n",
+    )
+    .unwrap();
+
+    assert!(AppConfig::load_validated_from(&path).is_err());
+}
+
+#[test]
+fn load_validated_from_accepts_good_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    AppConfig::default().save_to(&path).unwrap();
+
+    let cfg = AppConfig::load_validated_from(&path).unwrap();
+    assert!(cfg.validate().is_ok());
+}
+
+#[test]
 fn constants_have_expected_values() {
     assert_eq!(DEFAULT_PORT, 7290);
     assert_eq!(openplay_common::PROTOCOL_VERSION, 1);

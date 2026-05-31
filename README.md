@@ -133,6 +133,8 @@ airplay_enabled = true
 miracast_enabled = true
 ```
 
+Configuration values are validated against supported ranges on load: the display name must be non-empty, the port non-zero, `max_bitrate_kbps` between 100 and 100000, and `framerate` between 1 and 240. An out-of-range value (for example a `max_bitrate_kbps` of `0` from a typo) is reported as a clear configuration error rather than failing later inside the media pipeline.
+
 ## Repository layout
 
 ```
