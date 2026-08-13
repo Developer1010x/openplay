@@ -8,7 +8,7 @@ use openplay_common::AppConfig;
 use openplay_discovery::{AirPlayBrowser, DiscoveryEvent, MiracastBrowser, ReceiverBrowser};
 use tracing::{info, warn};
 
-use crate::casting::{CastStopHandle, start_airplay_cast, start_miracast_cast};
+use crate::casting::{start_airplay_cast, start_miracast_cast, CastStopHandle};
 use crate::receiver_list::{DiscoveredReceiver, MiracastMode, MiracastReceiver, Protocol};
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -176,13 +176,21 @@ impl SenderApp {
                 }
                 DiscoveryEvent::AirPlayReceiverLost { name } => self.remove_receiver(&name),
                 DiscoveryEvent::MiracastReceiverFound(info) => {
-                    let addr = info.addresses.first().copied()
+                    let addr = info
+                        .addresses
+                        .first()
+                        .copied()
                         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
                     // Check if device_info looks like a MAC (Wi-Fi Direct) or IP
                     let mode = if info.device_info.contains(':') && info.device_info.len() == 17 {
-                        MiracastMode::WifiDirect { device_address: info.device_info.clone() }
+                        MiracastMode::WifiDirect {
+                            device_address: info.device_info.clone(),
+                        }
                     } else {
-                        MiracastMode::Infrastructure { addr, port: info.port }
+                        MiracastMode::Infrastructure {
+                            addr,
+                            port: info.port,
+                        }
                     };
                     let r = DiscoveredReceiver::Miracast(MiracastReceiver {
                         display_name: info.display_name,
@@ -248,7 +256,9 @@ impl SenderApp {
                             .enable_all()
                             .build()
                             .unwrap();
-                        rt.block_on(start_airplay_cast(addr, bitrate, fps, handle, stop, status_cb));
+                        rt.block_on(start_airplay_cast(
+                            addr, bitrate, fps, handle, stop, status_cb,
+                        ));
                     });
                 }
             }
@@ -265,8 +275,14 @@ impl SenderApp {
                                 .build()
                                 .unwrap();
                             rt.block_on(crate::casting::start_miracast_p2p_cast(
-                                &mac, bitrate, fps, handle, stop2,
-                                move |m| { let _ = tx2.send(m.to_string()); }
+                                &mac,
+                                bitrate,
+                                fps,
+                                handle,
+                                stop2,
+                                move |m| {
+                                    let _ = tx2.send(m.to_string());
+                                },
                             ));
                         });
                     }
@@ -282,7 +298,12 @@ impl SenderApp {
                             .build()
                             .unwrap();
                         rt.block_on(start_miracast_cast(
-                            addr.ip(), bitrate, fps, handle, stop, status_cb,
+                            addr.ip(),
+                            bitrate,
+                            fps,
+                            handle,
+                            stop,
+                            status_cb,
                         ));
                     });
                 }
@@ -341,7 +362,8 @@ impl eframe::App for SenderApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(egui::Button::new(
-                                RichText::new("⏹ Stop Casting").color(Color32::from_rgb(255, 80, 80)),
+                                RichText::new("⏹ Stop Casting")
+                                    .color(Color32::from_rgb(255, 80, 80)),
                             ))
                             .clicked()
                         {
@@ -392,7 +414,9 @@ impl eframe::App for SenderApp {
                 ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
                     let keys: Vec<_> = self.receiver_keys.clone();
                     for key in &keys {
-                        let Some(receiver) = self.receivers.get(key) else { continue };
+                        let Some(receiver) = self.receivers.get(key) else {
+                            continue;
+                        };
                         let selected = self.selected_key.as_deref() == Some(key);
                         let (proto_label, proto_color) = protocol_badge(receiver.protocol());
 
@@ -408,9 +432,7 @@ impl eframe::App for SenderApp {
                                 ui.set_min_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(
-                                            RichText::new(receiver.display_name()).strong(),
-                                        );
+                                        ui.label(RichText::new(receiver.display_name()).strong());
                                         ui.label(
                                             RichText::new(receiver_subtitle(receiver))
                                                 .small()
@@ -556,7 +578,9 @@ impl eframe::App for SenderApp {
                                 self.miracast_name.clone()
                             };
                             if self.miracast_is_p2p {
-                                if self.miracast_addr.len() >= 11 && self.miracast_addr.contains(':') {
+                                if self.miracast_addr.len() >= 11
+                                    && self.miracast_addr.contains(':')
+                                {
                                     let r = DiscoveredReceiver::Miracast(MiracastReceiver {
                                         display_name: name,
                                         mode: MiracastMode::WifiDirect {
@@ -570,7 +594,10 @@ impl eframe::App for SenderApp {
                             } else if let Ok(ip) = IpAddr::from_str(&self.miracast_addr) {
                                 let r = DiscoveredReceiver::Miracast(MiracastReceiver {
                                     display_name: name,
-                                    mode: MiracastMode::Infrastructure { addr: ip, port: 7236 },
+                                    mode: MiracastMode::Infrastructure {
+                                        addr: ip,
+                                        port: 7236,
+                                    },
                                 });
                                 self.add_receiver(r);
                                 info!(ip = %ip, "Added manual Miracast receiver");
@@ -604,11 +631,19 @@ fn protocol_badge(protocol: Protocol) -> (&'static str, Color32) {
 fn receiver_subtitle(receiver: &DiscoveredReceiver) -> String {
     match receiver {
         DiscoveredReceiver::OpenPlay(r) => {
-            let addr = r.addresses.first().map(|a| a.to_string()).unwrap_or_default();
+            let addr = r
+                .addresses
+                .first()
+                .map(|a| a.to_string())
+                .unwrap_or_default();
             format!("{addr}:{}", r.port)
         }
         DiscoveredReceiver::AirPlay(r) => {
-            let addr = r.addresses.first().map(|a| a.to_string()).unwrap_or_default();
+            let addr = r
+                .addresses
+                .first()
+                .map(|a| a.to_string())
+                .unwrap_or_default();
             if r.model.is_empty() || r.model == "Manual" {
                 addr
             } else {

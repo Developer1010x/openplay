@@ -39,9 +39,9 @@ impl AirPlayBrowser {
             DiscoveryError::Mdns(format!("Failed to create mDNS daemon for AirPlay: {e}"))
         })?;
 
-        let receiver = daemon.browse(AIRPLAY_SERVICE_TYPE).map_err(|e| {
-            DiscoveryError::Mdns(format!("Failed to browse AirPlay services: {e}"))
-        })?;
+        let receiver = daemon
+            .browse(AIRPLAY_SERVICE_TYPE)
+            .map_err(|e| DiscoveryError::Mdns(format!("Failed to browse AirPlay services: {e}")))?;
 
         let (tx, rx) = mpsc::channel(32);
 
@@ -79,10 +79,7 @@ impl AirPlayBrowser {
                                     .as_ref()
                                     .map(|t| t.features.clone())
                                     .unwrap_or_default(),
-                                model: txt
-                                    .as_ref()
-                                    .map(|t| t.model.clone())
-                                    .unwrap_or_default(),
+                                model: txt.as_ref().map(|t| t.model.clone()).unwrap_or_default(),
                             };
 
                             info!(

@@ -40,10 +40,7 @@ impl TxtRecord {
     /// Parses TXT record from key=value pairs.
     pub fn from_properties(props: &[(String, String)]) -> Option<Self> {
         let get = |key: &str| -> Option<String> {
-            props
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.clone())
+            props.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
         };
 
         Some(Self {
@@ -55,7 +52,9 @@ impl TxtRecord {
             resolution: get("res").unwrap_or_else(|| "1920x1080".to_string()),
             max_fps: get("fps").and_then(|f| f.parse().ok()).unwrap_or(30),
             fingerprint: get("fp").unwrap_or_default(),
-            port: get("port").and_then(|p| p.parse().ok()).unwrap_or(super::DEFAULT_PORT),
+            port: get("port")
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(super::DEFAULT_PORT),
         })
     }
 }

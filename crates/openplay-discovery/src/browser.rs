@@ -76,10 +76,7 @@ impl ReceiverBrowser {
                                 video_codecs: txt
                                     .as_ref()
                                     .map(|t| {
-                                        t.video_codecs
-                                            .split(',')
-                                            .map(|s| s.to_string())
-                                            .collect()
+                                        t.video_codecs.split(',').map(|s| s.to_string()).collect()
                                     })
                                     .unwrap_or_else(|| vec!["h264".to_string()]),
                                 resolution: txt

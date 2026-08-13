@@ -223,7 +223,10 @@ async fn run_airplay_pipeline(
         warn!("No HW encoder found, falling back to x264");
         EncoderType::X264
     });
-    info!(encoder = encoder_type.factory_name(), "Using encoder for AirPlay");
+    info!(
+        encoder = encoder_type.factory_name(),
+        "Using encoder for AirPlay"
+    );
 
     let pipeline = AirPlaySenderPipeline::new(&capture_config, encoder_type, bitrate_kbps)?;
 
@@ -232,9 +235,13 @@ async fn run_airplay_pipeline(
     pipeline.appsink().set_callbacks(
         gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
-                let sample = appsink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
+                let sample = appsink
+                    .pull_sample()
+                    .map_err(|_| gstreamer::FlowError::Eos)?;
                 let buffer = sample.buffer().ok_or(gstreamer::FlowError::Error)?;
-                let map = buffer.map_readable().map_err(|_| gstreamer::FlowError::Error)?;
+                let map = buffer
+                    .map_readable()
+                    .map_err(|_| gstreamer::FlowError::Error)?;
                 let data = map.as_slice().to_vec();
                 let _ = frame_tx.try_send(data);
                 Ok(gstreamer::FlowSuccess::Ok)
@@ -305,7 +312,10 @@ async fn run_miracast_pipeline(
         warn!("No HW encoder found, falling back to x264");
         EncoderType::X264
     });
-    info!(encoder = encoder_type.factory_name(), "Using encoder for Miracast");
+    info!(
+        encoder = encoder_type.factory_name(),
+        "Using encoder for Miracast"
+    );
 
     info!(%sink_addr, "Starting Miracast WFD negotiation");
     let mut session = MiracastSession::start(sink_addr)
@@ -313,8 +323,17 @@ async fn run_miracast_pipeline(
         .map_err(|e| anyhow::anyhow!("Miracast session failed: {e}"))?;
 
     let (_width, _height, _fps, rtp_port, rtp_addr) = match session.events().recv().await {
-        Some(MiracastEvent::Ready { width, height, fps, rtp_port, sink_addr }) => {
-            info!(width, height, fps, rtp_port, "Miracast negotiation complete");
+        Some(MiracastEvent::Ready {
+            width,
+            height,
+            fps,
+            rtp_port,
+            sink_addr,
+        }) => {
+            info!(
+                width,
+                height, fps, rtp_port, "Miracast negotiation complete"
+            );
             (width, height, fps, rtp_port, sink_addr)
         }
         Some(MiracastEvent::Ended(Some(e))) => {
@@ -368,16 +387,23 @@ async fn run_miracast_p2p_pipeline(
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let encoder_type = probe_best_encoder().unwrap_or(EncoderType::X264);
-    info!(encoder = encoder_type.factory_name(), "Using encoder for P2P Miracast");
+    info!(
+        encoder = encoder_type.factory_name(),
+        "Using encoder for P2P Miracast"
+    );
 
     let mut session = MiracastSession::start_wifi_direct(peer_mac, 7236)
         .await
         .map_err(|e| anyhow::anyhow!("P2P Miracast session failed: {e}"))?;
 
     let (_w, _h, _fps, rtp_port, rtp_addr) = match session.events().recv().await {
-        Some(MiracastEvent::Ready { width, height, fps, rtp_port, sink_addr }) => {
-            (width, height, fps, rtp_port, sink_addr)
-        }
+        Some(MiracastEvent::Ready {
+            width,
+            height,
+            fps,
+            rtp_port,
+            sink_addr,
+        }) => (width, height, fps, rtp_port, sink_addr),
         Some(MiracastEvent::Ended(Some(e))) => {
             return Err(anyhow::anyhow!("P2P negotiation failed: {e}"));
         }
@@ -386,12 +412,18 @@ async fn run_miracast_p2p_pipeline(
 
     let sink_ip = rtp_addr.ip().to_string();
     let pipeline = MiracastSenderPipeline::new(
-        &capture_config, encoder_type, bitrate_kbps, &sink_ip, rtp_port,
+        &capture_config,
+        encoder_type,
+        bitrate_kbps,
+        &sink_ip,
+        rtp_port,
     )?;
     pipeline.start()?;
 
     loop {
-        if stop_flag.load(Ordering::Relaxed) { break; }
+        if stop_flag.load(Ordering::Relaxed) {
+            break;
+        }
         tokio::select! {
             event = session.events().recv() => {
                 match event {
@@ -413,8 +445,14 @@ fn make_capture_config(capture: &CaptureSession, framerate: u32) -> CaptureConfi
     #[cfg(target_os = "linux")]
     {
         let node_id = capture.primary_source().map(|s| s.node_id).unwrap_or(0);
-        let width = capture.primary_source().and_then(|s| s.width).unwrap_or(1920);
-        let height = capture.primary_source().and_then(|s| s.height).unwrap_or(1080);
+        let width = capture
+            .primary_source()
+            .and_then(|s| s.width)
+            .unwrap_or(1920);
+        let height = capture
+            .primary_source()
+            .and_then(|s| s.height)
+            .unwrap_or(1080);
         CaptureConfig::new(capture.pipewire_fd(), node_id, width, height, framerate)
     }
     #[cfg(not(target_os = "linux"))]
@@ -438,10 +476,16 @@ fn extract_sps_pps(data: &[u8]) -> Option<Vec<u8>> {
             data.len()
         };
         let nalu = &data[start..end];
-        let header_offset = if nalu.starts_with(&[0, 0, 0, 1]) { 4 }
-            else if nalu.starts_with(&[0, 0, 1]) { 3 }
-            else { continue };
-        if header_offset >= nalu.len() { continue; }
+        let header_offset = if nalu.starts_with(&[0, 0, 0, 1]) {
+            4
+        } else if nalu.starts_with(&[0, 0, 1]) {
+            3
+        } else {
+            continue;
+        };
+        if header_offset >= nalu.len() {
+            continue;
+        }
         match nalu[header_offset] & 0x1F {
             7 => sps = Some(nalu),
             8 => pps = Some(nalu),
@@ -487,8 +531,10 @@ mod tests {
 
     #[test]
     fn test_find_nalu_starts() {
-        let data = [0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1e,
-                    0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x38, 0x80];
+        let data = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce,
+            0x38, 0x80,
+        ];
         assert_eq!(find_nalu_starts(&data), vec![0, 8]);
     }
 

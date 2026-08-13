@@ -213,9 +213,7 @@ mod tests {
                 target_kbps: 4000,
                 reason: BitrateHintReason::PacketLoss,
             },
-            SignalingMessage::Ping {
-                timestamp_ms: 1000,
-            },
+            SignalingMessage::Ping { timestamp_ms: 1000 },
             SignalingMessage::Pong {
                 timestamp_ms: 1000,
                 receiver_timestamp_ms: 1001,

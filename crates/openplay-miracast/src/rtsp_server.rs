@@ -63,14 +63,20 @@ pub async fn negotiate(
     send_options(&mut stream, cseq).await?;
     let m1_resp = read_rtsp_response(&mut stream).await?;
     if !m1_resp.status.starts_with("200") {
-        return Err(MiracastError::Rtsp(format!("M1 OPTIONS rejected: {}", m1_resp.status)));
+        return Err(MiracastError::Rtsp(format!(
+            "M1 OPTIONS rejected: {}",
+            m1_resp.status
+        )));
     }
     debug!(state = ?WfdState::M1OptionsSent, "M1 complete");
 
     // M2: Wait for sink's OPTIONS request
     let m2_req = read_rtsp_request(&mut stream).await?;
     if m2_req.method != "OPTIONS" {
-        return Err(MiracastError::Rtsp(format!("Expected M2 OPTIONS, got {}", m2_req.method)));
+        return Err(MiracastError::Rtsp(format!(
+            "Expected M2 OPTIONS, got {}",
+            m2_req.method
+        )));
     }
     send_options_response(&mut stream, &m2_req).await?;
     debug!(state = ?WfdState::M2SinkOptions, "M2 complete");
@@ -80,7 +86,10 @@ pub async fn negotiate(
     send_get_parameter(&mut stream, cseq).await?;
     let m3_resp = read_rtsp_response(&mut stream).await?;
     if !m3_resp.status.starts_with("200") {
-        return Err(MiracastError::Rtsp(format!("M3 GET_PARAMETER rejected: {}", m3_resp.status)));
+        return Err(MiracastError::Rtsp(format!(
+            "M3 GET_PARAMETER rejected: {}",
+            m3_resp.status
+        )));
     }
 
     // Parse sink capabilities
@@ -88,29 +97,28 @@ pub async fn negotiate(
     let _sink_rtp_ports = parse_sink_rtp_ports(&m3_resp.body);
 
     // Negotiate resolution
-    let (width, height, fps) = crate::wfd_params::negotiate_resolution(
-        source_formats,
-        &sink_formats.unwrap_or_default(),
-    );
+    let (width, height, fps) =
+        crate::wfd_params::negotiate_resolution(source_formats, &sink_formats.unwrap_or_default());
     info!(width, height, fps, "Negotiated resolution");
 
     // M4: Source sends SET_PARAMETER with negotiated params
     cseq += 1;
     let negotiated = WfdVideoFormats {
-        cea_resolutions: crate::wfd_params::CeaResolutions(
-            match (width, height, fps) {
-                (1920, 1080, 60) => crate::wfd_params::CeaResolutions::RES_1920X1080_P60,
-                (1920, 1080, _) => crate::wfd_params::CeaResolutions::RES_1920X1080_P30,
-                (1280, 720, 60) => crate::wfd_params::CeaResolutions::RES_1280X720_P60,
-                _ => crate::wfd_params::CeaResolutions::RES_1280X720_P30,
-            }
-        ),
+        cea_resolutions: crate::wfd_params::CeaResolutions(match (width, height, fps) {
+            (1920, 1080, 60) => crate::wfd_params::CeaResolutions::RES_1920X1080_P60,
+            (1920, 1080, _) => crate::wfd_params::CeaResolutions::RES_1920X1080_P30,
+            (1280, 720, 60) => crate::wfd_params::CeaResolutions::RES_1280X720_P60,
+            _ => crate::wfd_params::CeaResolutions::RES_1280X720_P30,
+        }),
         ..source_formats.clone()
     };
     send_set_parameter(&mut stream, cseq, &negotiated).await?;
     let m4_resp = read_rtsp_response(&mut stream).await?;
     if !m4_resp.status.starts_with("200") {
-        return Err(MiracastError::Rtsp(format!("M4 SET_PARAMETER rejected: {}", m4_resp.status)));
+        return Err(MiracastError::Rtsp(format!(
+            "M4 SET_PARAMETER rejected: {}",
+            m4_resp.status
+        )));
     }
     debug!(state = ?WfdState::M4SetParameter, "M4 complete");
 
@@ -119,14 +127,20 @@ pub async fn negotiate(
     send_trigger_setup(&mut stream, cseq).await?;
     let m5_resp = read_rtsp_response(&mut stream).await?;
     if !m5_resp.status.starts_with("200") {
-        return Err(MiracastError::Rtsp(format!("M5 trigger rejected: {}", m5_resp.status)));
+        return Err(MiracastError::Rtsp(format!(
+            "M5 trigger rejected: {}",
+            m5_resp.status
+        )));
     }
     debug!(state = ?WfdState::M5Trigger, "M5 complete");
 
     // M6: Wait for sink's SETUP request
     let m6_req = read_rtsp_request(&mut stream).await?;
     if m6_req.method != "SETUP" {
-        return Err(MiracastError::Rtsp(format!("Expected M6 SETUP, got {}", m6_req.method)));
+        return Err(MiracastError::Rtsp(format!(
+            "Expected M6 SETUP, got {}",
+            m6_req.method
+        )));
     }
     let rtp_port = parse_transport_port(&m6_req.headers).unwrap_or(1028);
     send_setup_response(&mut stream, &m6_req, rtp_port).await?;
@@ -135,7 +149,10 @@ pub async fn negotiate(
     // M7: Wait for sink's PLAY request
     let m7_req = read_rtsp_request(&mut stream).await?;
     if m7_req.method != "PLAY" {
-        return Err(MiracastError::Rtsp(format!("Expected M7 PLAY, got {}", m7_req.method)));
+        return Err(MiracastError::Rtsp(format!(
+            "Expected M7 PLAY, got {}",
+            m7_req.method
+        )));
     }
     send_play_response(&mut stream, &m7_req).await?;
     info!(state = ?WfdState::M7Play, "WFD negotiation complete — ready to stream");
@@ -170,18 +187,25 @@ struct RtspRequest {
 // --- Send helpers ---
 
 async fn send_options(stream: &mut TcpStream, cseq: u32) -> Result<(), MiracastError> {
-    let msg = format!(
-        "OPTIONS * RTSP/1.0\r\nCSeq: {cseq}\r\nRequire: org.wfa.wfd1.0\r\n\r\n"
-    );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M1: {e}")))
+    let msg = format!("OPTIONS * RTSP/1.0\r\nCSeq: {cseq}\r\nRequire: org.wfa.wfd1.0\r\n\r\n");
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M1: {e}")))
 }
 
-async fn send_options_response(stream: &mut TcpStream, req: &RtspRequest) -> Result<(), MiracastError> {
+async fn send_options_response(
+    stream: &mut TcpStream,
+    req: &RtspRequest,
+) -> Result<(), MiracastError> {
     let msg = format!(
         "RTSP/1.0 200 OK\r\nCSeq: {}\r\nPublic: org.wfa.wfd1.0, GET_PARAMETER, SET_PARAMETER\r\n\r\n",
         req.cseq
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M2 response: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M2 response: {e}")))
 }
 
 async fn send_get_parameter(stream: &mut TcpStream, cseq: u32) -> Result<(), MiracastError> {
@@ -190,7 +214,10 @@ async fn send_get_parameter(stream: &mut TcpStream, cseq: u32) -> Result<(), Mir
         "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: {cseq}\r\nContent-Type: text/parameters\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M3: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M3: {e}")))
 }
 
 async fn send_set_parameter(
@@ -206,7 +233,10 @@ async fn send_set_parameter(
         "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: {cseq}\r\nContent-Type: text/parameters\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M4: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M4: {e}")))
 }
 
 async fn send_trigger_setup(stream: &mut TcpStream, cseq: u32) -> Result<(), MiracastError> {
@@ -215,7 +245,10 @@ async fn send_trigger_setup(stream: &mut TcpStream, cseq: u32) -> Result<(), Mir
         "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: {cseq}\r\nContent-Type: text/parameters\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M5: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M5: {e}")))
 }
 
 async fn send_setup_response(
@@ -227,15 +260,24 @@ async fn send_setup_response(
         "RTSP/1.0 200 OK\r\nCSeq: {}\r\nSession: 1;timeout=30\r\nTransport: RTP/AVP/UDP;unicast;client_port={rtp_port};server_port={rtp_port}\r\n\r\n",
         req.cseq
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M6 response: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M6 response: {e}")))
 }
 
-async fn send_play_response(stream: &mut TcpStream, req: &RtspRequest) -> Result<(), MiracastError> {
+async fn send_play_response(
+    stream: &mut TcpStream,
+    req: &RtspRequest,
+) -> Result<(), MiracastError> {
     let msg = format!(
         "RTSP/1.0 200 OK\r\nCSeq: {}\r\nSession: 1\r\n\r\n",
         req.cseq
     );
-    stream.write_all(msg.as_bytes()).await.map_err(|e| MiracastError::Rtsp(format!("Send M7 response: {e}")))
+    stream
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| MiracastError::Rtsp(format!("Send M7 response: {e}")))
 }
 
 // --- Read helpers ---
@@ -243,11 +285,7 @@ async fn send_play_response(stream: &mut TcpStream, req: &RtspRequest) -> Result
 async fn read_rtsp_response(stream: &mut TcpStream) -> Result<RtspResponse, MiracastError> {
     let raw = read_rtsp_message(stream).await?;
     let (header_part, body) = split_header_body(&raw);
-    let status = header_part
-        .lines()
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let status = header_part.lines().next().unwrap_or("").to_string();
     Ok(RtspResponse {
         status,
         headers: header_part.to_string(),
@@ -344,7 +382,10 @@ fn parse_sink_rtp_ports(body: &str) -> Option<WfdClientRtpPorts> {
 
 fn parse_transport_port(headers: &str) -> Option<u16> {
     for line in headers.lines() {
-        if let Some(transport) = line.strip_prefix("Transport:").or_else(|| line.strip_prefix("transport:")) {
+        if let Some(transport) = line
+            .strip_prefix("Transport:")
+            .or_else(|| line.strip_prefix("transport:"))
+        {
             for part in transport.split(';') {
                 if let Some(port_str) = part.strip_prefix("client_port=") {
                     return port_str.trim().parse().ok();

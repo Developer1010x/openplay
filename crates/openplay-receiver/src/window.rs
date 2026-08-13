@@ -1,5 +1,5 @@
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use openplay_common::AppConfig;

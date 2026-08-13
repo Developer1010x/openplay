@@ -35,17 +35,13 @@ fn txt_record_roundtrip_all_fields() {
 #[test]
 fn txt_record_missing_version_returns_none() {
     // from_properties requires "v" key for version
-    let props: Vec<(String, String)> = vec![
-        ("dn".to_string(), "TV".to_string()),
-    ];
+    let props: Vec<(String, String)> = vec![("dn".to_string(), "TV".to_string())];
     assert!(TxtRecord::from_properties(&props).is_none());
 }
 
 #[test]
 fn txt_record_missing_display_name_returns_none() {
-    let props: Vec<(String, String)> = vec![
-        ("v".to_string(), "1".to_string()),
-    ];
+    let props: Vec<(String, String)> = vec![("v".to_string(), "1".to_string())];
     assert!(TxtRecord::from_properties(&props).is_none());
 }
 
@@ -108,9 +104,7 @@ fn airplay_txt_record_full_parse() {
 
 #[test]
 fn airplay_txt_record_minimal_only_deviceid() {
-    let props = vec![
-        ("deviceid".to_string(), "11:22:33:44:55:66".to_string()),
-    ];
+    let props = vec![("deviceid".to_string(), "11:22:33:44:55:66".to_string())];
     let record = AirPlayTxtRecord::from_properties(&props).unwrap();
     assert_eq!(record.device_id, "11:22:33:44:55:66");
     assert!(record.features.is_empty());
@@ -119,9 +113,7 @@ fn airplay_txt_record_minimal_only_deviceid() {
 
 #[test]
 fn airplay_txt_record_missing_deviceid_returns_none() {
-    let props = vec![
-        ("features".to_string(), "0x5A7FFFF7".to_string()),
-    ];
+    let props = vec![("features".to_string(), "0x5A7FFFF7".to_string())];
     assert!(AirPlayTxtRecord::from_properties(&props).is_none());
 }
 

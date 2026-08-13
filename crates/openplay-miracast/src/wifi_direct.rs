@@ -142,7 +142,9 @@ impl WifiDirectManager {
     /// NOTE: Do NOT stop P2P Find before Connect — wpa_supplicant needs
     /// the active scan for GO negotiation to work.
     pub async fn connect(&self, peer_mac: &str) -> anyhow::Result<()> {
-        let interface_path = self.p2p_interface_path.as_ref()
+        let interface_path = self
+            .p2p_interface_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No P2P interface available"))?;
 
         let mac_hex = peer_mac.replace(':', "").replace('-', "").to_lowercase();
@@ -156,7 +158,8 @@ impl WifiDirectManager {
             WPA_SERVICE,
             interface_path.as_str(),
             WPA_P2P_INTERFACE,
-        ).await?;
+        )
+        .await?;
 
         // Remove stale persistent groups from previous connections
         let _ = proxy.call_method("RemoveAllPersistentGroups", &()).await;
@@ -174,7 +177,9 @@ impl WifiDirectManager {
             ("go_intent", zbus::zvariant::Value::new(0i32)),
         ]);
 
-        proxy.call_method("Connect", &(args,)).await
+        proxy
+            .call_method("Connect", &(args,))
+            .await
             .map_err(|e| anyhow::anyhow!("P2P connect failed: {e}"))?;
 
         info!("P2P connection initiated — waiting for GO negotiation");
@@ -190,7 +195,8 @@ impl WifiDirectManager {
                 WPA_SERVICE,
                 interface_path.as_str(),
                 WPA_P2P_INTERFACE,
-            ).await?;
+            )
+            .await?;
 
             let _ = proxy.call_method("StopFind", &()).await;
             info!("P2P discovery stopped");
@@ -207,7 +213,8 @@ impl WifiDirectManager {
                 WPA_SERVICE,
                 interface_path.as_str(),
                 WPA_INTERFACE,
-            ).await?;
+            )
+            .await?;
 
             let _ = proxy.call_method("Disconnect", &()).await;
             info!("P2P group disconnected");
@@ -221,18 +228,11 @@ async fn set_wfd_ies() {
     let wfd_ies = build_wfd_ie();
     match zbus::Connection::system().await {
         Ok(connection) => {
-            match zbus::Proxy::new(
-                &connection,
-                WPA_SERVICE,
-                WPA_PATH,
-                WPA_INTERFACE,
-            ).await {
-                Ok(root_proxy) => {
-                    match root_proxy.set_property("WFDIEs", &wfd_ies).await {
-                        Ok(()) => info!("WFD IEs set — advertising as WFD source"),
-                        Err(e) => warn!(%e, "Failed to set WFD IEs"),
-                    }
-                }
+            match zbus::Proxy::new(&connection, WPA_SERVICE, WPA_PATH, WPA_INTERFACE).await {
+                Ok(root_proxy) => match root_proxy.set_property("WFDIEs", &wfd_ies).await {
+                    Ok(()) => info!("WFD IEs set — advertising as WFD source"),
+                    Err(e) => warn!(%e, "Failed to set WFD IEs"),
+                },
                 Err(e) => warn!(%e, "Failed to create wpa proxy for WFD IEs"),
             }
         }
@@ -246,27 +246,31 @@ pub async fn find_p2p_interface_path() -> anyhow::Result<String> {
 }
 
 /// Resolve Linux ifname from a D-Bus object path (public for session use).
-pub async fn resolve_ifname(connection: &zbus::Connection, obj_path: &str) -> anyhow::Result<String> {
+pub async fn resolve_ifname(
+    connection: &zbus::Connection,
+    obj_path: &str,
+) -> anyhow::Result<String> {
     resolve_ifname_from_dbus(connection, obj_path).await
 }
 
 /// Find a P2P-capable wireless interface via wpa_supplicant D-Bus.
 async fn find_p2p_interface() -> anyhow::Result<String> {
-    let connection = zbus::Connection::system().await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to system D-Bus: {e}. Is wpa_supplicant running?"))?;
+    let connection = zbus::Connection::system().await.map_err(|e| {
+        anyhow::anyhow!("Failed to connect to system D-Bus: {e}. Is wpa_supplicant running?")
+    })?;
 
-    let proxy = zbus::Proxy::new(
-        &connection,
-        WPA_SERVICE,
-        WPA_PATH,
-        WPA_INTERFACE,
-    ).await?;
+    let proxy = zbus::Proxy::new(&connection, WPA_SERVICE, WPA_PATH, WPA_INTERFACE).await?;
 
-    let interfaces: Vec<zbus::zvariant::OwnedObjectPath> = proxy.get_property("Interfaces").await
-        .map_err(|e| anyhow::anyhow!("Failed to get wpa_supplicant interfaces: {e}"))?;
+    let interfaces: Vec<zbus::zvariant::OwnedObjectPath> =
+        proxy
+            .get_property("Interfaces")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get wpa_supplicant interfaces: {e}"))?;
 
     if interfaces.is_empty() {
-        return Err(anyhow::anyhow!("No wireless interfaces found in wpa_supplicant"));
+        return Err(anyhow::anyhow!(
+            "No wireless interfaces found in wpa_supplicant"
+        ));
     }
 
     // Try to find one that supports P2P
@@ -276,10 +280,14 @@ async fn find_p2p_interface() -> anyhow::Result<String> {
             WPA_SERVICE,
             iface_path.as_str(),
             WPA_P2P_INTERFACE,
-        ).await?;
+        )
+        .await?;
 
         // Try a harmless P2P operation to check if the interface supports it
-        match p2p_proxy.call_method("Find", &(HashMap::<&str, zbus::zvariant::Value>::new(),)).await {
+        match p2p_proxy
+            .call_method("Find", &(HashMap::<&str, zbus::zvariant::Value>::new(),))
+            .await
+        {
             Ok(_) => {
                 let _ = p2p_proxy.call_method("StopFind", &()).await;
                 return Ok(iface_path.to_string());
@@ -301,16 +309,14 @@ async fn run_p2p_discovery(
 ) -> anyhow::Result<()> {
     let connection = zbus::Connection::system().await?;
 
-    let proxy = zbus::Proxy::new(
-        &connection,
-        WPA_SERVICE,
-        interface_path,
-        WPA_P2P_INTERFACE,
-    ).await?;
+    let proxy =
+        zbus::Proxy::new(&connection, WPA_SERVICE, interface_path, WPA_P2P_INTERFACE).await?;
 
     // Start P2P find
     let find_args: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
-    proxy.call_method("Find", &(find_args,)).await
+    proxy
+        .call_method("Find", &(find_args,))
+        .await
         .map_err(|e| anyhow::anyhow!("P2P Find failed: {e}"))?;
 
     info!("P2P discovery started, listening for peers...");
@@ -334,12 +340,8 @@ async fn listen_for_signals(
     interface_path: &str,
     event_tx: mpsc::Sender<WifiDirectEvent>,
 ) -> anyhow::Result<()> {
-    let proxy = zbus::Proxy::new(
-        connection,
-        WPA_SERVICE,
-        interface_path,
-        WPA_P2P_INTERFACE,
-    ).await?;
+    let proxy =
+        zbus::Proxy::new(connection, WPA_SERVICE, interface_path, WPA_P2P_INTERFACE).await?;
 
     let mut device_found = proxy.receive_signal("DeviceFound").await?;
     let mut device_lost = proxy.receive_signal("DeviceLost").await?;
@@ -350,7 +352,9 @@ async fn listen_for_signals(
     let mut group_finished = proxy.receive_signal("GroupFinished").await?;
     let mut group_formation_failure = proxy.receive_signal("GroupFormationFailure").await?;
     let mut prov_disc_pbc_req = proxy.receive_signal("ProvisionDiscoveryPBCRequest").await?;
-    let mut prov_disc_pbc_resp = proxy.receive_signal("ProvisionDiscoveryPBCResponse").await?;
+    let mut prov_disc_pbc_resp = proxy
+        .receive_signal("ProvisionDiscoveryPBCResponse")
+        .await?;
 
     loop {
         tokio::select! {
@@ -525,9 +529,12 @@ async fn get_peer_info(
         WPA_SERVICE,
         peer_path,
         "fi.w1.wpa_supplicant1.Peer",
-    ).await?;
+    )
+    .await?;
 
-    let device_name: String = proxy.get_property("DeviceName").await
+    let device_name: String = proxy
+        .get_property("DeviceName")
+        .await
         .unwrap_or_else(|_| "Unknown".to_string());
 
     // DeviceAddress is a byte array (ay) in wpa_supplicant D-Bus, not a string
@@ -538,14 +545,11 @@ async fn get_peer_info(
                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
             )
         }
-        _ => {
-            extract_mac_from_path(peer_path)
-        }
+        _ => extract_mac_from_path(peer_path),
     };
 
     // Check for WFD IEs
-    let wfd_ies: Vec<u8> = proxy.get_property("IEs").await
-        .unwrap_or_default();
+    let wfd_ies: Vec<u8> = proxy.get_property("IEs").await.unwrap_or_default();
 
     let wfd_supported = has_wfd_ie(&wfd_ies);
     let wfd_device_info = parse_wfd_device_info(&wfd_ies);
@@ -574,12 +578,18 @@ fn extract_mac_from_path(path: &str) -> String {
         let b = last.as_bytes();
         format!(
             "{}{}:{}{}:{}{}:{}{}:{}{}:{}{}",
-            b[0] as char, b[1] as char,
-            b[2] as char, b[3] as char,
-            b[4] as char, b[5] as char,
-            b[6] as char, b[7] as char,
-            b[8] as char, b[9] as char,
-            b[10] as char, b[11] as char,
+            b[0] as char,
+            b[1] as char,
+            b[2] as char,
+            b[3] as char,
+            b[4] as char,
+            b[5] as char,
+            b[6] as char,
+            b[7] as char,
+            b[8] as char,
+            b[9] as char,
+            b[10] as char,
+            b[11] as char,
         )
     } else {
         last.to_string()
@@ -596,9 +606,12 @@ async fn resolve_ifname_from_dbus(
         WPA_SERVICE,
         interface_obj_path,
         "fi.w1.wpa_supplicant1.Interface",
-    ).await?;
+    )
+    .await?;
 
-    let ifname: String = proxy.get_property("Ifname").await
+    let ifname: String = proxy
+        .get_property("Ifname")
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to get Ifname: {e}"))?;
 
     Ok(ifname)
@@ -651,15 +664,14 @@ fn parse_wfd_device_info(ies: &[u8]) -> Option<u16> {
 }
 
 /// Get the IP address of a P2P peer after group formation.
-pub async fn resolve_peer_ip(
-    interface_name: &str,
-    timeout: Duration,
-) -> anyhow::Result<IpAddr> {
+pub async fn resolve_peer_ip(interface_name: &str, timeout: Duration) -> anyhow::Result<IpAddr> {
     let start = tokio::time::Instant::now();
 
     loop {
         if start.elapsed() > timeout {
-            return Err(anyhow::anyhow!("Timeout waiting for peer IP on {interface_name}"));
+            return Err(anyhow::anyhow!(
+                "Timeout waiting for peer IP on {interface_name}"
+            ));
         }
 
         match get_peer_ip_from_arp(interface_name).await {
@@ -688,7 +700,9 @@ async fn get_peer_ip_from_arp(interface_name: &str) -> anyhow::Result<IpAddr> {
         }
     }
 
-    Err(anyhow::anyhow!("No reachable peer found on {interface_name}"))
+    Err(anyhow::anyhow!(
+        "No reachable peer found on {interface_name}"
+    ))
 }
 
 #[cfg(test)]
@@ -700,7 +714,7 @@ mod tests {
         let ie = build_wfd_ie();
         assert_eq!(ie[0], 0x00); // Subelement ID
         assert_eq!(ie[2], 0x06); // Length
-        // Device info: 0x0090 (Source, Session Available, WFD Service Discovery)
+                                 // Device info: 0x0090 (Source, Session Available, WFD Service Discovery)
         let device_info = ((ie[3] as u16) << 8) | ie[4] as u16;
         assert_eq!(device_info, 0x0090);
         let port = ((ie[5] as u16) << 8) | ie[6] as u16;

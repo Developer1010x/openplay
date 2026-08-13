@@ -107,11 +107,7 @@ fn platform_encoder_candidates() -> &'static [EncoderType] {
 }
 
 /// Configures encoder properties for low-latency streaming.
-pub fn configure_encoder(
-    encoder: &gst::Element,
-    encoder_type: EncoderType,
-    bitrate_kbps: u32,
-) {
+pub fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, bitrate_kbps: u32) {
     match encoder_type {
         EncoderType::VaH264 => {
             encoder.set_property_from_str("rate-control", "cbr");

@@ -1,8 +1,7 @@
 use openplay_protocol::{
-    BitrateHintReason, Capabilities, NegotiatedParams, RejectReason, Resolution,
-    SessionEndReason, SignalingMessage,
-    receiver_event_from_message, sender_event_from_message, ReceiverEvent,
-    ReceiverStateMachine, SenderEvent, SenderState, SenderStateMachine,
+    receiver_event_from_message, sender_event_from_message, BitrateHintReason, Capabilities,
+    NegotiatedParams, ReceiverEvent, ReceiverStateMachine, RejectReason, Resolution, SenderEvent,
+    SenderState, SenderStateMachine, SessionEndReason, SignalingMessage,
 };
 
 // ── Message serialization ──────────────────────────────────────────────────────
@@ -122,7 +121,9 @@ fn bitrate_hint_all_reasons() {
 
 #[test]
 fn ping_pong_roundtrip() {
-    let ping = SignalingMessage::Ping { timestamp_ms: 99_999 };
+    let ping = SignalingMessage::Ping {
+        timestamp_ms: 99_999,
+    };
     let pong = SignalingMessage::Pong {
         timestamp_ms: 99_999,
         receiver_timestamp_ms: 100_001,
@@ -160,7 +161,10 @@ fn capabilities_default_has_h264() {
 
 #[test]
 fn resolution_roundtrip() {
-    let res = Resolution { width: 3840, height: 2160 };
+    let res = Resolution {
+        width: 3840,
+        height: 2160,
+    };
     let json = serde_json::to_string(&res).unwrap();
     let back: Resolution = serde_json::from_str(&json).unwrap();
     assert_eq!(back.width, 3840);
@@ -250,10 +254,7 @@ fn receiver_rejected_connection_returns_to_advertising() {
     sm.transition(&ReceiverEvent::StartAdvertising).unwrap();
     sm.transition(&ReceiverEvent::IncomingConnection).unwrap();
     sm.transition(&ReceiverEvent::Rejected).unwrap();
-    assert_eq!(
-        sm.state(),
-        openplay_protocol::ReceiverState::Advertising
-    );
+    assert_eq!(sm.state(), openplay_protocol::ReceiverState::Advertising);
 }
 
 #[test]
@@ -263,10 +264,7 @@ fn receiver_pairing_failed_returns_to_advertising() {
     sm.transition(&ReceiverEvent::IncomingConnection).unwrap();
     sm.transition(&ReceiverEvent::NeedsPairing).unwrap();
     sm.transition(&ReceiverEvent::PairingFailed).unwrap();
-    assert_eq!(
-        sm.state(),
-        openplay_protocol::ReceiverState::Advertising
-    );
+    assert_eq!(sm.state(), openplay_protocol::ReceiverState::Advertising);
 }
 
 #[test]
@@ -276,10 +274,7 @@ fn receiver_auth_failed_returns_to_advertising() {
     sm.transition(&ReceiverEvent::IncomingConnection).unwrap();
     sm.transition(&ReceiverEvent::AlreadyPaired).unwrap();
     sm.transition(&ReceiverEvent::AuthFailed).unwrap();
-    assert_eq!(
-        sm.state(),
-        openplay_protocol::ReceiverState::Advertising
-    );
+    assert_eq!(sm.state(), openplay_protocol::ReceiverState::Advertising);
 }
 
 #[test]
@@ -290,10 +285,7 @@ fn receiver_signaling_failed_returns_to_advertising() {
     sm.transition(&ReceiverEvent::AlreadyPaired).unwrap();
     sm.transition(&ReceiverEvent::Authenticated).unwrap();
     sm.transition(&ReceiverEvent::SignalingFailed).unwrap();
-    assert_eq!(
-        sm.state(),
-        openplay_protocol::ReceiverState::Advertising
-    );
+    assert_eq!(sm.state(), openplay_protocol::ReceiverState::Advertising);
 }
 
 #[test]
@@ -345,7 +337,9 @@ fn sender_event_from_pairing_challenge() {
 
 #[test]
 fn sender_event_none_for_sdp_offer() {
-    let msg = SignalingMessage::SdpOffer { sdp: "v=0".to_string() };
+    let msg = SignalingMessage::SdpOffer {
+        sdp: "v=0".to_string(),
+    };
     assert_eq!(sender_event_from_message(&msg), None);
 }
 
