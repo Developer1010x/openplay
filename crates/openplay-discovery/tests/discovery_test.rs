@@ -1,8 +1,6 @@
 use openplay_discovery::{
-    airplay_record::AirPlayTxtRecord,
-    record::TxtRecord,
-    AirPlayReceiverInfo, MiracastReceiverInfo, ReceiverInfo,
-    SERVICE_TYPE, AIRPLAY_SERVICE_TYPE,
+    airplay_record::AirPlayTxtRecord, AirPlayReceiverInfo, MiracastReceiverInfo, ReceiverInfo,
+    TxtRecord, AIRPLAY_SERVICE_TYPE, SERVICE_TYPE,
 };
 
 // ── TxtRecord (OpenPlay) ───────────────────────────────────────────────────────

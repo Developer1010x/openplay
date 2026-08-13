@@ -56,10 +56,11 @@ impl MiracastBrowser {
                 Ok(receiver) => {
                     let tx_clone = tx.clone();
                     let stype = service_type.to_string();
+                    let thread_stype = stype.clone();
                     std::thread::Builder::new()
                         .name(format!("miracast-browser-{stype}"))
                         .spawn(move || {
-                            run_browser_thread(receiver, tx_clone, &stype);
+                            run_browser_thread(receiver, tx_clone, &thread_stype);
                         })
                         .map_err(|e| {
                             DiscoveryError::Mdns(format!(
@@ -89,7 +90,7 @@ impl MiracastBrowser {
 }
 
 fn run_browser_thread(
-    receiver: std::sync::mpsc::Receiver<ServiceEvent>,
+    receiver: mdns_sd::Receiver<ServiceEvent>,
     tx: mpsc::Sender<DiscoveryEvent>,
     service_type: &str,
 ) {
