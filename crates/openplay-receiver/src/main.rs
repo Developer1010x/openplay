@@ -28,8 +28,8 @@ fn main() -> anyhow::Result<()> {
     info!("OpenPlay Receiver starting");
 
     let mut config = match &args.config {
-        Some(path) => openplay_common::AppConfig::load_from(path)?,
-        None => openplay_common::AppConfig::load()?,
+        Some(path) => openplay_common::AppConfig::load_or_create_at(path)?,
+        None => openplay_common::AppConfig::load_or_create()?,
     };
 
     if let Some(name) = &args.name {
@@ -38,6 +38,10 @@ fn main() -> anyhow::Result<()> {
     if let Some(port) = args.port {
         config.port = port;
     }
+
+    // Re-validate after the CLI overrides: `--port 0` and `--name ""` are just
+    // as invalid as the same values in the file, and only this check sees them.
+    config.validate()?;
 
     openplay_common::ensure_dirs()?;
 

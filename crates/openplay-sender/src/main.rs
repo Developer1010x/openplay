@@ -28,13 +28,17 @@ fn main() -> anyhow::Result<()> {
     info!("GStreamer initialized");
 
     let mut config = match &args.config {
-        Some(path) => openplay_common::AppConfig::load_from(path)?,
-        None => openplay_common::AppConfig::load()?,
+        Some(path) => openplay_common::AppConfig::load_or_create_at(path)?,
+        None => openplay_common::AppConfig::load_or_create()?,
     };
 
     if let Some(name) = &args.name {
         config.display_name = name.clone();
     }
+
+    // Re-validate after the CLI overrides: `--name ""` is just as invalid as an
+    // empty display_name in the file, and only this check sees it.
+    config.validate()?;
 
     openplay_common::ensure_dirs()?;
 

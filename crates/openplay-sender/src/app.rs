@@ -237,6 +237,7 @@ impl SenderApp {
     fn start_cast(&mut self, receiver: DiscoveredReceiver) {
         let bitrate = self.config.max_bitrate_kbps;
         let fps = self.config.framerate;
+        let force_sw = self.config.force_sw_encode;
         let handle = self.tokio_rt.handle().clone();
         let stop = CastStopHandle::new();
         self.stop_handle = Some(stop.clone());
@@ -257,7 +258,7 @@ impl SenderApp {
                             .build()
                             .unwrap();
                         rt.block_on(start_airplay_cast(
-                            addr, bitrate, fps, handle, stop, status_cb,
+                            addr, bitrate, fps, force_sw, handle, stop, status_cb,
                         ));
                     });
                 }
@@ -278,6 +279,7 @@ impl SenderApp {
                                 &mac,
                                 bitrate,
                                 fps,
+                                force_sw,
                                 handle,
                                 stop2,
                                 move |m| {
@@ -301,6 +303,7 @@ impl SenderApp {
                             addr.ip(),
                             bitrate,
                             fps,
+                            force_sw,
                             handle,
                             stop,
                             status_cb,

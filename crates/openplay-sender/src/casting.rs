@@ -52,6 +52,7 @@ pub async fn start_airplay_cast(
     receiver_addr: SocketAddr,
     bitrate_kbps: u32,
     framerate: u32,
+    force_sw_encode: bool,
     tokio_handle: TokioHandle,
     stop_handle: CastStopHandle,
     status_callback: impl Fn(&str) + 'static,
@@ -83,6 +84,7 @@ pub async fn start_airplay_cast(
                 width,
                 height,
                 bitrate_kbps,
+                force_sw_encode,
                 stop_flag,
             )
             .await
@@ -117,6 +119,7 @@ pub async fn start_miracast_cast(
     receiver_ip: std::net::IpAddr,
     bitrate_kbps: u32,
     framerate: u32,
+    force_sw_encode: bool,
     tokio_handle: TokioHandle,
     stop_handle: CastStopHandle,
     status_callback: impl Fn(&str) + 'static,
@@ -140,7 +143,14 @@ pub async fn start_miracast_cast(
 
     let result = tokio_handle
         .spawn(async move {
-            run_miracast_pipeline(sink_addr, capture_config, bitrate_kbps, stop_flag).await
+            run_miracast_pipeline(
+                sink_addr,
+                capture_config,
+                bitrate_kbps,
+                force_sw_encode,
+                stop_flag,
+            )
+            .await
         })
         .await;
 
@@ -173,6 +183,7 @@ pub async fn start_miracast_p2p_cast(
     peer_mac: &str,
     bitrate_kbps: u32,
     framerate: u32,
+    force_sw_encode: bool,
     tokio_handle: TokioHandle,
     stop_handle: CastStopHandle,
     status_callback: impl Fn(&str) + 'static,
@@ -196,7 +207,14 @@ pub async fn start_miracast_p2p_cast(
 
     let result = tokio_handle
         .spawn(async move {
-            run_miracast_p2p_pipeline(&mac, capture_config, bitrate_kbps, stop_flag).await
+            run_miracast_p2p_pipeline(
+                &mac,
+                capture_config,
+                bitrate_kbps,
+                force_sw_encode,
+                stop_flag,
+            )
+            .await
         })
         .await;
 
@@ -215,18 +233,34 @@ pub async fn start_miracast_p2p_cast(
 
 // ─── Internal pipeline runners ────────────────────────────────────────────────
 
+/// Picks the H.264 encoder for a cast.
+///
+/// `force_sw_encode` comes straight from `config.toml` and exists to debug
+/// hardware-encoder problems: it skips registry probing entirely rather than
+/// probing and then discarding the result. Otherwise we probe, and fall back to
+/// x264 if nothing hardware-accelerated is available.
+fn select_encoder(force_sw_encode: bool) -> EncoderType {
+    if force_sw_encode {
+        info!("force_sw_encode is set, skipping hardware encoder probe");
+        return EncoderType::X264;
+    }
+
+    probe_best_encoder().unwrap_or_else(|_| {
+        warn!("No HW encoder found, falling back to x264");
+        EncoderType::X264
+    })
+}
+
 async fn run_airplay_pipeline(
     receiver_addr: SocketAddr,
     capture_config: CaptureConfig,
     width: u32,
     height: u32,
     bitrate_kbps: u32,
+    force_sw_encode: bool,
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let encoder_type = probe_best_encoder().unwrap_or_else(|_| {
-        warn!("No HW encoder found, falling back to x264");
-        EncoderType::X264
-    });
+    let encoder_type = select_encoder(force_sw_encode);
     info!(
         encoder = encoder_type.factory_name(),
         "Using encoder for AirPlay"
@@ -310,12 +344,10 @@ async fn run_miracast_pipeline(
     sink_addr: SocketAddr,
     capture_config: CaptureConfig,
     bitrate_kbps: u32,
+    force_sw_encode: bool,
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let encoder_type = probe_best_encoder().unwrap_or_else(|_| {
-        warn!("No HW encoder found, falling back to x264");
-        EncoderType::X264
-    });
+    let encoder_type = select_encoder(force_sw_encode);
     info!(
         encoder = encoder_type.factory_name(),
         "Using encoder for Miracast"
@@ -388,9 +420,10 @@ async fn run_miracast_p2p_pipeline(
     peer_mac: &str,
     capture_config: CaptureConfig,
     bitrate_kbps: u32,
+    force_sw_encode: bool,
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let encoder_type = probe_best_encoder().unwrap_or(EncoderType::X264);
+    let encoder_type = select_encoder(force_sw_encode);
     info!(
         encoder = encoder_type.factory_name(),
         "Using encoder for P2P Miracast"
