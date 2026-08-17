@@ -1,22 +1,18 @@
 //! HomeKit Accessory Protocol (HAP) pairing for AirPlay.
 //!
-//! # This module does not interoperate with real AirPlay receivers
+//! # Status
 //!
-//! `pair_setup` and `pair_setup_transient` cannot succeed against genuine Apple
-//! hardware, because [`SRP_N_HEX`] is not the RFC 5054 group it claims to be —
-//! see the note on that constant. SRP over a modulus the accessory does not
-//! share cannot produce a matching session key, so the accessory will reject
-//! the proof every time. Expect a failure at the M1/M2 exchange, not a
-//! connectivity problem: do not spend time debugging the network path.
+//! The SRP-6a group this module uses was fabricated in an earlier revision and
+//! has been replaced with the real RFC 5054 appendix A 3072-bit group; see
+//! [`crate::srp`], whose tests re-derive it from RFC 3526's formula and check
+//! the client against an independent implementation of the server side.
 //!
-//! `pair_verify` is unaffected in structure, but it depends on long-term keys
-//! that only a successful `pair_setup` can produce, so it is unreachable in
-//! practice today.
+//! That removes the known blocker to pairing with real hardware. It has not
+//! been confirmed against physical Apple hardware, so treat pairing as
+//! untested-in-the-field rather than proven.
 //!
-//! Everything else here — the TLV8 framing, the HKDF/ChaCha20-Poly1305 layer,
-//! the Ed25519 signing and the paired-device store — follows the specification
-//! and should work once the group constant is corrected. Fixing this means
-//! sourcing the real 3072-bit group; tracked in issue #8.
+//! Note that a receiver requiring FairPlay will still fail later in the
+//! session, for an unrelated reason — see [`crate::fairplay`].
 //!
 //! Implements:
 //! - `pair-setup`: First-time pairing using SRP-6a with a 4-digit PIN
@@ -30,44 +26,14 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use num_bigint::BigUint;
-use sha2::{Digest, Sha512};
+use sha2::Sha512;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
+use crate::srp;
 use crate::tlv8;
-
-/// SRP-6a modulus — **placeholder, not the RFC 5054 group**.
-///
-/// This is meant to be the 3072-bit group from RFC 5054 appendix A, and it
-/// begins with those digits, but it diverges partway through. Three facts,
-/// each independently checkable from the value below:
-///
-/// - it is 772 hex digits, so 3088 bits, not 3072;
-/// - it is not equal to the RFC 5054 3072-bit prime;
-/// - it is composite (Miller-Rabin, bases 2..37).
-///
-/// SRP requires both parties to agree on `N`, and requires `N` to be prime.
-/// Neither holds, so no handshake using this constant can ever agree on a
-/// session key with a real accessory. Replacing it with the correct group is
-/// the single change that unblocks `pair_setup`; see issue #8.
-const SRP_N_HEX: &str = "\
-FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
-020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437\
-4FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED\
-EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF05\
-98DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9\
-ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE3\
-9E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF695581718399\
-5AC44B1B0A8E5CF4B2A6BDEE14C7B62C8B8628018B68D3F2CEE6E0868B1A3A15\
-5E2ADED1F175BE4F6C3454D4412C08A235C079F4CC02F3A6311A49C20B874B3A4\
-14E4D5F5A1E10AC32F7B34A1BDEF5E307AFDC2B2C19C75CE2F330E7B4F0872BC\
-BC8D32F5BBE9A6B52D91A6C2157CECD13EB4AD5B14CF46F0DF9543C5FBD8B38B\
-E884CA77EE55D2C7116CDC7D3FC19BE6D7E5E6949BD66A2B0D8DC1E2A3D0C9B3";
-
-const SRP_G: u32 = 5;
 
 /// AirPlay pairing username (always "Pair-Setup" for pair-setup).
 const PAIR_SETUP_USERNAME: &str = "Pair-Setup";
@@ -120,28 +86,11 @@ pub async fn pair_setup(addr: SocketAddr, pin: &str) -> anyhow::Result<PairSetup
     pair_setup_internal(addr, pin, false).await
 }
 
-/// Warns, once per process, that pairing cannot succeed against real hardware.
-///
-/// The module docs say this, but nobody reads module docs while staring at a
-/// receiver that keeps rejecting them. See issue #8.
-fn warn_pairing_not_interoperable() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        warn!(
-            "AirPlay HAP pairing uses a placeholder SRP group and cannot succeed \
-             against a real receiver — expect rejection at the SRP proof, not a \
-             network problem (issue #8)"
-        );
-    });
-}
-
 async fn pair_setup_internal(
     addr: SocketAddr,
     pin: &str,
     transient: bool,
 ) -> anyhow::Result<PairSetupResult> {
-    warn_pairing_not_interoperable();
-
     let mut stream = TcpStream::connect(addr).await?;
     info!(%addr, transient, "Starting HAP pair-setup");
 
@@ -178,93 +127,18 @@ async fn pair_setup_internal(
         "M2 received"
     );
 
-    // SRP-6a client computation
-    let n = BigUint::parse_bytes(SRP_N_HEX.as_bytes(), 16)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse SRP prime"))?;
-    let g = BigUint::from(SRP_G);
-
-    // Generate private key a, compute A = g^a mod N
-    let a = random_bigint(256);
-    let big_a = g.modpow(&a, &n);
-    let big_a_bytes = pad_to_n(&big_a, &n);
-
-    let big_b = BigUint::from_bytes_be(server_pk_bytes);
-
-    // u = SHA-512(A | B)
-    let u = {
-        let mut hasher = Sha512::new();
-        hasher.update(&big_a_bytes);
-        hasher.update(pad_to_n(&big_b, &n));
-        BigUint::from_bytes_be(&hasher.finalize())
-    };
-
-    // x = SHA-512(salt | SHA-512(username | ":" | password))
-    let x = {
-        let inner = {
-            let mut h = Sha512::new();
-            h.update(PAIR_SETUP_USERNAME.as_bytes());
-            h.update(b":");
-            h.update(pin.as_bytes());
-            h.finalize()
-        };
-        let mut h = Sha512::new();
-        h.update(salt);
-        h.update(inner);
-        BigUint::from_bytes_be(&h.finalize())
-    };
-
-    // k = SHA-512(N | pad(g))
-    let k = {
-        let mut h = Sha512::new();
-        h.update(n.to_bytes_be());
-        h.update(pad_to_n(&g, &n));
-        BigUint::from_bytes_be(&h.finalize())
-    };
-
-    // S = (B - k * g^x mod N) ^ (a + u * x) mod N
-    let gx = g.modpow(&x, &n);
-    let kgx = (&k * &gx) % &n;
-    let diff = if big_b >= kgx {
-        &big_b - &kgx
-    } else {
-        &n - &kgx + &big_b
-    };
-    let exp = &a + &u * &x;
-    let big_s = diff.modpow(&exp, &n);
-
-    // K = SHA-512(S)
-    let session_key = {
-        let mut h = Sha512::new();
-        h.update(pad_to_n(&big_s, &n));
-        h.finalize()
-    };
-
-    // M1 proof = SHA-512(SHA-512(N) XOR SHA-512(g) | SHA-512(username) | salt | A | B | K)
-    let proof_m1 = {
-        let hash_n = Sha512::digest(n.to_bytes_be());
-        let hash_g = Sha512::digest(pad_to_n(&g, &n));
-        let hash_xor: Vec<u8> = hash_n
-            .iter()
-            .zip(hash_g.iter())
-            .map(|(a, b)| a ^ b)
-            .collect();
-        let hash_user = Sha512::digest(PAIR_SETUP_USERNAME.as_bytes());
-
-        let mut h = Sha512::new();
-        h.update(&hash_xor);
-        h.update(hash_user);
-        h.update(salt);
-        h.update(&big_a_bytes);
-        h.update(pad_to_n(&big_b, &n));
-        h.update(session_key);
-        h.finalize().to_vec()
-    };
+    // SRP-6a client computation. The math and its tests live in `crate::srp`,
+    // which cross-checks this against an independent implementation of the
+    // server side.
+    let a = srp::random_private_key();
+    let client = srp::client_compute(PAIR_SETUP_USERNAME, pin, salt, server_pk_bytes, &a)?;
+    let session_key = client.session_key;
 
     // M3: Client → Server: State=3, PublicKey=A, Proof=M1
     let m3 = tlv8::encode(&[
         tlv8::item_u8(tlv8::tags::STATE, 3),
-        tlv8::item(tlv8::tags::PUBLIC_KEY, big_a_bytes.clone()),
-        tlv8::item(tlv8::tags::PROOF, proof_m1.clone()),
+        tlv8::item(tlv8::tags::PUBLIC_KEY, client.public_a.clone()),
+        tlv8::item(tlv8::tags::PROOF, client.m1.clone()),
     ]);
     send_pair_setup(&mut stream, &m3).await?;
 
@@ -277,15 +151,7 @@ async fn pair_setup_internal(
     let server_proof = tlv8::lookup(&m4, tlv8::tags::PROOF)
         .ok_or_else(|| anyhow::anyhow!("M4: missing server proof"))?;
 
-    // Verify server proof: M2 = SHA-512(A | M1 | K)
-    let expected_m2 = {
-        let mut h = Sha512::new();
-        h.update(&big_a_bytes);
-        h.update(&proof_m1);
-        h.update(session_key);
-        h.finalize()
-    };
-    if server_proof != expected_m2.as_slice() {
+    if server_proof != client.expected_m2.as_slice() {
         return Err(anyhow::anyhow!("Server proof verification failed"));
     }
     info!("SRP-6a verification successful");
@@ -662,25 +528,6 @@ fn hkdf_derive(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> anyhow::Resu
     Ok(okm)
 }
 
-fn random_bigint(bytes: usize) -> BigUint {
-    let mut rng_bytes = vec![0u8; bytes];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut rng_bytes);
-    BigUint::from_bytes_be(&rng_bytes)
-}
-
-fn pad_to_n(value: &BigUint, n: &BigUint) -> Vec<u8> {
-    let n_len = n.to_bytes_be().len();
-    let bytes = value.to_bytes_be();
-    if bytes.len() >= n_len {
-        bytes
-    } else {
-        let mut padded = vec![0u8; n_len - bytes.len()];
-        padded.extend_from_slice(&bytes);
-        padded
-    }
-}
-
 // --- Paired device storage ---
 
 /// Initialize the paired devices SQLite database.
@@ -761,29 +608,6 @@ pub fn list_paired_devices(conn: &rusqlite::Connection) -> anyhow::Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_srp_n_parses() {
-        let n = BigUint::parse_bytes(SRP_N_HEX.as_bytes(), 16);
-        assert!(n.is_some());
-        let n = n.unwrap();
-        assert!(n > BigUint::from(1u32));
-        // 3072-bit prime should be ~384 bytes (may include leading bytes)
-        let n_bytes = n.to_bytes_be().len();
-        assert!(
-            (384..=386).contains(&n_bytes),
-            "N should be ~384 bytes, got {n_bytes}"
-        );
-    }
-
-    #[test]
-    fn test_pad_to_n() {
-        let n = BigUint::from(256u32);
-        let val = BigUint::from(1u32);
-        let padded = pad_to_n(&val, &n);
-        assert_eq!(padded.len(), 2); // N is 2 bytes
-        assert_eq!(padded, &[0, 1]);
-    }
 
     #[test]
     fn test_hkdf_derive() {
