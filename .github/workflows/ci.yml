@@ -40,6 +40,32 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  # The protocol crates carry no GStreamer or PipeWire dependency, so they can be
+  # checked on macOS and Windows without installing any system packages. This is
+  # what catches Linux-only code leaking out of its #[cfg] gate (see #6); the
+  # ubuntu-only matrix above cannot.
+  cross-platform-check:
+    name: Cross-platform check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check portable crates
+        run: >
+          cargo check --all-targets
+          -p openplay-common
+          -p openplay-protocol
+          -p openplay-crypto
+          -p openplay-airplay
+          -p openplay-miracast
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ubuntu-24.04

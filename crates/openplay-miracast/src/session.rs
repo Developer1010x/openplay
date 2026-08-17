@@ -1,12 +1,19 @@
 use std::net::SocketAddr;
+// Only the Wi-Fi Direct path has timeouts, listens for an inbound sink, or warns.
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
-use tokio::net::{TcpListener, TcpStream};
+#[cfg(target_os = "linux")]
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+#[cfg(target_os = "linux")]
+use tracing::warn;
+use tracing::{error, info};
 
 use crate::rtsp_server;
 use crate::wfd_params::WfdVideoFormats;
+#[cfg(target_os = "linux")]
 use crate::wifi_direct::{self, WifiDirectEvent, WifiDirectManager};
 use crate::MiracastError;
 
@@ -85,6 +92,10 @@ impl MiracastSession {
     /// # Arguments
     /// * `peer_address` - Wi-Fi Direct device address (MAC) of the sink
     /// * `rtsp_port` - RTSP port (default 7236)
+    ///
+    /// Only available on Linux, where peer discovery and P2P group formation go
+    /// through wpa_supplicant over D-Bus. See [`crate::wifi_direct`].
+    #[cfg(target_os = "linux")]
     pub async fn start_wifi_direct(
         peer_address: &str,
         rtsp_port: u16,
@@ -167,6 +178,7 @@ async fn run_session(
 /// Uses wpa_supplicant D-Bus directly (not NetworkManager) with GO intent=0
 /// (prefer client role, like miraclecast). After P2P group forms, we listen
 /// on port 7236 for the sink to connect (WFD spec: source is the RTSP server).
+#[cfg(target_os = "linux")]
 async fn run_wifi_direct_session(
     peer_address: &str,
     rtsp_port: u16,
