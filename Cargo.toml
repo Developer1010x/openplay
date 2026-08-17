@@ -18,7 +18,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/openplay-project/openplay"
+repository = "https://github.com/Developer1010x/openplay"
 rust-version = "1.80"
 
 [workspace.dependencies]
