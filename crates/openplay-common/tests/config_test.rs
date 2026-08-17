@@ -200,3 +200,49 @@ fn constants_have_expected_values() {
     assert!(openplay_common::MDNS_SERVICE_TYPE.contains("openplay"));
     assert!(openplay_common::AIRPLAY_MDNS_SERVICE_TYPE.contains("airplay"));
 }
+
+#[test]
+fn load_or_create_at_writes_the_file_on_first_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested").join("config.toml");
+    assert!(!path.exists());
+
+    let cfg = AppConfig::load_or_create_at(&path).unwrap();
+
+    assert!(
+        path.exists(),
+        "first run should materialise the config file"
+    );
+    assert_eq!(cfg.port, DEFAULT_PORT);
+
+    // What was written must be what we returned, and must round-trip.
+    let reloaded = AppConfig::load_from(&path).unwrap();
+    assert_eq!(reloaded.port, cfg.port);
+    assert_eq!(reloaded.display_name, cfg.display_name);
+    assert_eq!(reloaded.max_bitrate_kbps, cfg.max_bitrate_kbps);
+}
+
+#[test]
+fn load_or_create_at_does_not_overwrite_an_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(&path, "port = 12345\n").unwrap();
+
+    let cfg = AppConfig::load_or_create_at(&path).unwrap();
+
+    assert_eq!(cfg.port, 12345);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "port = 12345\n");
+}
+
+#[test]
+fn load_or_create_at_rejects_an_out_of_range_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(&path, "max_bitrate_kbps = 0\n").unwrap();
+
+    let err = AppConfig::load_or_create_at(&path).unwrap_err();
+    assert!(
+        matches!(err, OpenPlayError::Config(_)),
+        "expected a config error, got {err:?}"
+    );
+}

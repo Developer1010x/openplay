@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tracing::{info, warn};
 
 use crate::error::OpenPlayError;
 use crate::paths::config_dir;
@@ -94,6 +95,45 @@ impl AppConfig {
         let config = Self::load_from(path).map_err(|e| OpenPlayError::Config(e.to_string()))?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// Loads config from the default path, writing the defaults out first if no
+    /// file exists yet.
+    ///
+    /// This is what the binaries call at startup: it gives the user a real
+    /// `config.toml` to edit after the first run, rather than a path documented
+    /// in the README that never materialises.
+    pub fn load_or_create() -> Result<Self, OpenPlayError> {
+        let path = config_dir().join("config.toml");
+        Self::load_or_create_at(&path)
+    }
+
+    /// Loads config from a specific path, writing the defaults out first if the
+    /// file does not exist.
+    ///
+    /// A failure to write is logged and ignored — a read-only or unwritable
+    /// config directory should not stop the application from starting with
+    /// working defaults. A failure to *parse* or *validate* an existing file is
+    /// still an error, since that means the user asked for something specific
+    /// and we cannot honour it.
+    pub fn load_or_create_at(path: &Path) -> Result<Self, OpenPlayError> {
+        if !path.exists() {
+            let config = Self::default();
+            match config.save_to(path) {
+                Ok(()) => info!(path = %path.display(), "Wrote default config"),
+                Err(e) => warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Could not write default config, continuing with in-memory defaults"
+                ),
+            }
+            // Defaults are valid by construction, but validate anyway so this
+            // path cannot drift away from load_validated_from.
+            config.validate()?;
+            return Ok(config);
+        }
+
+        Self::load_validated_from(path)
     }
 
     /// Checks that every field holds a value the rest of the system can use.
