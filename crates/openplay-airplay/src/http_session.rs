@@ -24,7 +24,7 @@ pub struct NegotiatedStream {
 }
 
 /// Parsed server info from AirPlay GET /info response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerInfo {
     /// Device model (e.g. "AppleTV5,3", "LG Smart TV", etc.).
     pub model: String,
@@ -36,18 +36,6 @@ pub struct ServerInfo {
     pub source_version: String,
     /// MAC address.
     pub mac_address: String,
-}
-
-impl Default for ServerInfo {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            device_name: String::new(),
-            features: AirPlayFeatures::default(),
-            source_version: String::new(),
-            mac_address: String::new(),
-        }
-    }
 }
 
 /// Performs AirPlay HTTP negotiation with a receiver.
@@ -289,10 +277,12 @@ fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
     let features = if features_str.is_empty() {
         dict.get("features")
             .and_then(|v| v.as_unsigned_integer())
-            .map(|v| AirPlayFeatures::parse(&format!("0x{v:X}")))
+            .and_then(|v| AirPlayFeatures::parse(&format!("0x{v:X}")))
             .unwrap_or_default()
     } else {
-        AirPlayFeatures::parse(&features_str)
+        // A receiver advertising a malformed `features` string is treated as
+        // advertising nothing, rather than failing the whole /info parse.
+        AirPlayFeatures::parse(&features_str).unwrap_or_default()
     };
 
     Ok(ServerInfo {

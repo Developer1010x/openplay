@@ -1,22 +1,21 @@
-use gtk::prelude::*;
-use gtk4 as gtk;
-use libadwaita as adw;
-use libadwaita::prelude::*;
 use openplay_common::AppConfig;
-use tracing::info;
 
 use crate::window::ReceiverWindow;
 
-const APP_ID: &str = "org.openplay.Receiver";
+/// Runs the receiver application.
+pub fn run(config: AppConfig) -> anyhow::Result<()> {
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("OpenPlay Receiver")
+            .with_inner_size([800.0, 600.0])
+            .with_min_inner_size([480.0, 360.0]),
+        ..Default::default()
+    };
 
-/// Runs the GTK4 receiver application and returns the exit code.
-pub fn run(config: AppConfig) -> i32 {
-    let app = adw::Application::builder().application_id(APP_ID).build();
-
-    app.connect_activate(move |app| {
-        let window = ReceiverWindow::new(app, &config);
-        window.present();
-    });
-
-    app.run().into()
+    eframe::run_native(
+        "OpenPlay Receiver",
+        native_options,
+        Box::new(|cc| Ok(Box::new(ReceiverWindow::new(cc, config)))),
+    )
+    .map_err(|e| anyhow::anyhow!("GUI error: {e}"))
 }

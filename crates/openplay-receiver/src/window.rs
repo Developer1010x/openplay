@@ -1,67 +1,44 @@
-use gtk::prelude::*;
-use gtk4 as gtk;
-use libadwaita as adw;
-use libadwaita::prelude::*;
+use egui::{Color32, RichText};
 use openplay_common::AppConfig;
 use tracing::info;
 
 /// Main window for the OpenPlay receiver application.
 pub struct ReceiverWindow {
-    window: adw::ApplicationWindow,
+    config: AppConfig,
 }
 
 impl ReceiverWindow {
-    pub fn new(app: &adw::Application, config: &AppConfig) -> Self {
-        let header = adw::HeaderBar::new();
-
-        // Status page shown when waiting for a connection
-        let status_page = adw::StatusPage::builder()
-            .title(&config.display_name)
-            .description("Waiting for a sender to connect...")
-            .icon_name("network-wireless-symbolic")
-            .build();
-
-        // Connection info
-        let info_label = gtk::Label::builder()
-            .label(format!("Listening on port {}", config.port))
-            .css_classes(vec!["dim-label"])
-            .build();
-
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .build();
-        content.append(&status_page);
-        content.append(&info_label);
-
-        let toolbar_view = adw::ToolbarView::builder().build();
-        toolbar_view.add_top_bar(&header);
-        toolbar_view.set_content(Some(&content));
-
-        let window = adw::ApplicationWindow::builder()
-            .application(app)
-            .title("OpenPlay Receiver")
-            .default_width(800)
-            .default_height(600)
-            .content(&toolbar_view)
-            .build();
-
+    pub fn new(_cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         info!(
             name = %config.display_name,
             port = config.port,
             "Receiver window created"
         );
 
-        Self { window }
+        Self { config }
     }
 
-    /// Switches from the waiting page to fullscreen video display.
-    pub fn show_video(&self, _paintable: &impl gtk::prelude::IsA<gtk::gdk::Paintable>) {
-        // TODO: Phase 1 — create Picture widget with the gtk4paintablesink paintable
-        // and swap it in, then go fullscreen
-        info!("Switching to video display mode");
+    /// The page shown while no sender is connected.
+    ///
+    // TODO: Phase 1 — once the receiver pipeline is wired up, swap this for the
+    // decoded video frames and go fullscreen when a sender connects.
+    fn waiting_page(&self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() * 0.25);
+            ui.heading(&self.config.display_name);
+            ui.add_space(8.0);
+            ui.label("Waiting for a sender to connect...");
+            ui.add_space(16.0);
+            ui.label(
+                RichText::new(format!("Listening on port {}", self.config.port))
+                    .color(Color32::GRAY),
+            );
+        });
     }
+}
 
-    pub fn present(&self) {
-        self.window.present();
+impl eframe::App for ReceiverWindow {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| self.waiting_page(ui));
     }
 }

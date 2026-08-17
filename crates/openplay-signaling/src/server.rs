@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use openplay_protocol::SignalingMessage;
 use rustls::ServerConfig;
@@ -90,7 +90,7 @@ impl SignalingServer {
                                 continue;
                             }
                         };
-                        if let Err(e) = ws_sink.send(Message::Text(json.into())).await {
+                        if let Err(e) = ws_sink.send(Message::Text(json)).await {
                             error!(peer = %peer_addr, "Failed to send message: {e}");
                             break;
                         }

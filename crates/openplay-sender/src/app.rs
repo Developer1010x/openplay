@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::mpsc as std_mpsc;
 
@@ -621,11 +621,12 @@ impl eframe::App for SenderApp {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn protocol_badge(protocol: Protocol) -> (&'static str, Color32) {
-    match protocol {
-        Protocol::OpenPlay => ("OpenPlay", Color32::from_rgb(80, 160, 255)),
-        Protocol::AirPlay => ("AirPlay", Color32::from_rgb(80, 200, 120)),
-        Protocol::Miracast => ("Miracast", Color32::from_rgb(255, 180, 60)),
-    }
+    let color = match protocol {
+        Protocol::OpenPlay => Color32::from_rgb(80, 160, 255),
+        Protocol::AirPlay => Color32::from_rgb(80, 200, 120),
+        Protocol::Miracast => Color32::from_rgb(255, 180, 60),
+    };
+    (protocol.label(), color)
 }
 
 fn receiver_subtitle(receiver: &DiscoveredReceiver) -> String {

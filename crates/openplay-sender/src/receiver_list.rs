@@ -64,11 +64,6 @@ impl DiscoveredReceiver {
         }
     }
 
-    /// Protocol label for UI badge.
-    pub fn protocol_label(&self) -> &'static str {
-        self.protocol().label()
-    }
-
     /// Primary address for connection.
     pub fn addr(&self) -> Option<SocketAddr> {
         match self {

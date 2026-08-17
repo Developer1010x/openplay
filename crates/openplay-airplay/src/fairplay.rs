@@ -157,7 +157,7 @@ fn process_challenge(challenge: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16], [u8
     // Derive AES key from challenge using SHA-512
     let mut hasher = Sha512::new();
     hasher.update(server_data);
-    hasher.update(&FAIRPLAY_SEED);
+    hasher.update(FAIRPLAY_SEED);
     let hash = hasher.finalize();
 
     let mut aes_key = [0u8; 16];
@@ -201,7 +201,7 @@ fn process_challenge_short(challenge: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16
     // For older/simplified FairPlay, derive keys from the full challenge
     let mut hasher = Sha512::new();
     hasher.update(challenge);
-    hasher.update(&FAIRPLAY_SEED);
+    hasher.update(FAIRPLAY_SEED);
     let hash = hasher.finalize();
 
     let mut aes_key = [0u8; 16];
