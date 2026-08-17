@@ -10,6 +10,26 @@
 //! 3. Client sends type=3 response (derived from challenge)
 //! 4. Both sides derive an AES-128 key for stream encryption
 //!
+//! # This module does not interoperate with real AirPlay receivers
+//!
+//! The message framing above is right, but the key derivation is invented: the
+//! AES-128 key is computed as `SHA-512(server_data || FAIRPLAY_SEED)` with an
+//! ASCII string as the seed (see [`FAIRPLAY_SEED`]). Real FairPlay uses Apple's
+//! fixed key tables and a specific challenge-response transform, neither of
+//! which is present here. A receiver that requires FairPlay will reject the
+//! type=3 response; the failure looks like an unexplained connection reset, so
+//! do not spend time debugging the transport.
+//!
+//! The unit tests in this file pass because they only check internal
+//! self-consistency — that the seed decodes to its ASCII string, and that the
+//! cipher round-trips with the key it was given. Nothing here exercises
+//! interoperability, and no test in this crate can, without hardware.
+//!
+//! The doc comment below cites RPiPlay, shairplay and UxPlay, but this module
+//! does not use their key material. Porting it is possible — those projects are
+//! GPL, so license-compatible — but the key material itself is Apple's, which
+//! deserves a deliberate decision rather than an accident. Tracked in issue #8.
+//!
 //! Key material is based on the open-source AirPlay protocol documentation
 //! from projects like RPiPlay, shairplay, and UxPlay.
 
@@ -18,7 +38,7 @@ use cipher::{KeyIvInit, StreamCipher};
 use sha2::{Digest, Sha512};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 type Aes128Ctr = ctr::Ctr128BE<Aes128>;
 
@@ -66,6 +86,10 @@ impl FairPlayCipher {
 /// and returns the negotiated AES keys for stream encryption.
 pub async fn fp_setup(stream: &mut TcpStream) -> anyhow::Result<FairPlayKeys> {
     info!("Starting FairPlay setup");
+    warn!(
+        "FairPlay key derivation is a placeholder and cannot satisfy a real \
+         receiver — a rejection here is expected, not a transport fault (issue #8)"
+    );
 
     // Round 1: Send type=1 setup message
     let setup_msg = build_setup_message();
@@ -223,9 +247,12 @@ fn process_challenge_short(challenge: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16
     Ok((response, aes_key, aes_iv))
 }
 
-/// FairPlay key derivation seed.
-/// This is based on well-documented AirPlay protocol parameters from
-/// open-source implementations.
+/// FairPlay key derivation seed — **placeholder, not Apple's key material**.
+///
+/// This is the ASCII string `"AirPlay-FairPlay-Setup-Key-Seed1"`, chosen to
+/// stand in for the real key tables. It is not derived from the AirPlay
+/// protocol documentation and no receiver agrees on it, so every key derived
+/// from it is wrong. See the module docs and issue #8.
 const FAIRPLAY_SEED: [u8; 32] = [
     0x41, 0x69, 0x72, 0x50, 0x6C, 0x61, 0x79, 0x2D, // "AirPlay-"
     0x46, 0x61, 0x69, 0x72, 0x50, 0x6C, 0x61, 0x79, // "FairPlay"

@@ -1,5 +1,23 @@
 //! HomeKit Accessory Protocol (HAP) pairing for AirPlay.
 //!
+//! # This module does not interoperate with real AirPlay receivers
+//!
+//! `pair_setup` and `pair_setup_transient` cannot succeed against genuine Apple
+//! hardware, because [`SRP_N_HEX`] is not the RFC 5054 group it claims to be —
+//! see the note on that constant. SRP over a modulus the accessory does not
+//! share cannot produce a matching session key, so the accessory will reject
+//! the proof every time. Expect a failure at the M1/M2 exchange, not a
+//! connectivity problem: do not spend time debugging the network path.
+//!
+//! `pair_verify` is unaffected in structure, but it depends on long-term keys
+//! that only a successful `pair_setup` can produce, so it is unreachable in
+//! practice today.
+//!
+//! Everything else here — the TLV8 framing, the HKDF/ChaCha20-Poly1305 layer,
+//! the Ed25519 signing and the paired-device store — follows the specification
+//! and should work once the group constant is corrected. Fixing this means
+//! sourcing the real 3072-bit group; tracked in issue #8.
+//!
 //! Implements:
 //! - `pair-setup`: First-time pairing using SRP-6a with a 4-digit PIN
 //! - `pair-verify`: Subsequent connections using stored Ed25519 keys
@@ -16,12 +34,25 @@ use num_bigint::BigUint;
 use sha2::{Digest, Sha512};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::tlv8;
 
-/// SRP-6a 3072-bit prime (RFC 5054 appendix A).
+/// SRP-6a modulus — **placeholder, not the RFC 5054 group**.
+///
+/// This is meant to be the 3072-bit group from RFC 5054 appendix A, and it
+/// begins with those digits, but it diverges partway through. Three facts,
+/// each independently checkable from the value below:
+///
+/// - it is 772 hex digits, so 3088 bits, not 3072;
+/// - it is not equal to the RFC 5054 3072-bit prime;
+/// - it is composite (Miller-Rabin, bases 2..37).
+///
+/// SRP requires both parties to agree on `N`, and requires `N` to be prime.
+/// Neither holds, so no handshake using this constant can ever agree on a
+/// session key with a real accessory. Replacing it with the correct group is
+/// the single change that unblocks `pair_setup`; see issue #8.
 const SRP_N_HEX: &str = "\
 FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
 020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437\
@@ -89,11 +120,28 @@ pub async fn pair_setup(addr: SocketAddr, pin: &str) -> anyhow::Result<PairSetup
     pair_setup_internal(addr, pin, false).await
 }
 
+/// Warns, once per process, that pairing cannot succeed against real hardware.
+///
+/// The module docs say this, but nobody reads module docs while staring at a
+/// receiver that keeps rejecting them. See issue #8.
+fn warn_pairing_not_interoperable() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        warn!(
+            "AirPlay HAP pairing uses a placeholder SRP group and cannot succeed \
+             against a real receiver — expect rejection at the SRP proof, not a \
+             network problem (issue #8)"
+        );
+    });
+}
+
 async fn pair_setup_internal(
     addr: SocketAddr,
     pin: &str,
     transient: bool,
 ) -> anyhow::Result<PairSetupResult> {
+    warn_pairing_not_interoperable();
+
     let mut stream = TcpStream::connect(addr).await?;
     info!(%addr, transient, "Starting HAP pair-setup");
 

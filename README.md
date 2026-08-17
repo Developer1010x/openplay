@@ -15,7 +15,7 @@ Both are standalone GUI applications that discover each other automatically over
 
 | Protocol | Direction | Notes |
 |---|---|---|
-| AirPlay | Sender only | Cast to Apple TV, AirPlay 2 TVs, and compatible displays |
+| AirPlay | Sender only, **not yet interoperable** | Discovery, HTTP/plist session layer, TLV8, NTP and the mirror stream are implemented, but HAP pairing and FairPlay currently use placeholder crypto constants and are rejected by real receivers. Target: Apple TV, AirPlay 2 TVs, and compatible displays. See [#8](https://github.com/Developer1010x/openplay/issues/8) |
 | Miracast / Wi-Fi Display | Sender only | Cast to Miracast adapters and smart TVs; Wi-Fi Direct P2P supported on Linux |
 | OpenPlay (WebRTC) | Sender and receiver | Native protocol between two OpenPlay instances |
 
