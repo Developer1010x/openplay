@@ -2,7 +2,7 @@ use openplay_airplay::{
     features::AirPlayFeatures,
     mirror_header::{MirrorHeader, PacketType, HEADER_SIZE},
     ntp::ntp_timestamp_now,
-    tlv8::{self, Tlv8Item},
+    tlv8,
 };
 
 // ── AirPlayFeatures ────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ fn features_raw_preserves_value() {
 #[test]
 fn features_max_u64_parses() {
     let s = format!("0x{:X}", u32::MAX);
-    assert!(AirPlayFeatures::parse(&s).is_ok());
+    assert!(AirPlayFeatures::parse(&s).is_some());
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn lookup_finds_item_by_tag() {
 #[test]
 fn fragmentation_of_255_byte_value() {
     let data = vec![0xABu8; 255];
-    let items = vec![tlv8::item(0x07, &data)];
+    let items = vec![tlv8::item(0x07, data.clone())];
     let encoded = tlv8::encode(&items);
     let decoded = tlv8::decode(&encoded).unwrap();
     assert_eq!(decoded[0].value, data);
@@ -134,7 +134,7 @@ fn fragmentation_of_255_byte_value() {
 #[test]
 fn fragmentation_of_256_byte_value() {
     let data = vec![0xCDu8; 256];
-    let items = vec![tlv8::item(0x08, &data)];
+    let items = vec![tlv8::item(0x08, data.clone())];
     let encoded = tlv8::encode(&items);
     let decoded = tlv8::decode(&encoded).unwrap();
     assert_eq!(decoded[0].value, data);
@@ -143,7 +143,7 @@ fn fragmentation_of_256_byte_value() {
 #[test]
 fn fragmentation_of_large_value() {
     let data = vec![0xEFu8; 600];
-    let items = vec![tlv8::item(0x09, &data)];
+    let items = vec![tlv8::item(0x09, data.clone())];
     let encoded = tlv8::encode(&items);
     let decoded = tlv8::decode(&encoded).unwrap();
     assert_eq!(decoded[0].value, data);

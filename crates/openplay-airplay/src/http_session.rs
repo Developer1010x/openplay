@@ -289,10 +289,20 @@ fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
     let features = if features_str.is_empty() {
         dict.get("features")
             .and_then(|v| v.as_unsigned_integer())
-            .map(|v| AirPlayFeatures::parse(&format!("0x{v:X}")))
+            .and_then(|v| AirPlayFeatures::parse(&format!("0x{v:X}")))
             .unwrap_or_default()
     } else {
-        AirPlayFeatures::parse(&features_str)
+        AirPlayFeatures::parse(&features_str).unwrap_or_else(|| {
+            // An unreadable features string is not the same as a receiver that
+            // advertises nothing, but we have no better value to fall back to.
+            // Warn so the distinction is visible in the log rather than silently
+            // surfacing later as "receiver does not support mirroring".
+            warn!(
+                features = %features_str,
+                "Could not parse AirPlay features string; treating as no advertised features"
+            );
+            AirPlayFeatures::default()
+        })
     };
 
     Ok(ServerInfo {
