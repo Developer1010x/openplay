@@ -1,5 +1,9 @@
 # OpenPlay
 
+[![CI](https://github.com/Developer1010x/openplay/actions/workflows/ci.yml/badge.svg)](https://github.com/Developer1010x/openplay/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Rust 1.80+](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
+
 OpenPlay is an open-source screen casting system written in Rust. It lets you cast your screen from any Linux, macOS, or Windows machine to AirPlay receivers, Miracast receivers, or other machines running OpenPlay — all without proprietary software or cloud accounts.
 
 ## What it does
@@ -40,6 +44,13 @@ sections below describe the design, some of which is not yet connected.
   them. The sender's OpenPlay path sets a status string and stops; the receiver
   window is a static "waiting" page
   ([#11](https://github.com/Developer1010x/openplay/issues/11)).
+
+**Not implemented at all**
+
+- **Audio.** OpenPlay casts video only. There is no audio capture, encoding or
+  transport anywhere in the workspace. Note this despite the protocol layer
+  advertising Opus in `Capabilities` and Miracast negotiating `WfdAudioCodecs` —
+  those are declarations the pipeline does not honour.
 
 **Planned**
 
@@ -208,15 +219,31 @@ Each crate also carries its own `README.md`. Full documentation is in
 
 ## Contributing
 
-Contributions are welcome. If you are working on a new feature or a bug fix, open an issue first to discuss the approach. Pull requests should be focused and include a clear description of the change.
+**Contributions are very welcome, and the project is early enough that there is a
+lot of well-scoped work available.**
 
-Areas where help is particularly useful:
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) — it gets you building in about a
+minute — or go straight to the
+[good first issues](https://github.com/Developer1010x/openplay/labels/good%20first%20issue).
 
-- AirPlay receiver implementation
-- Miracast receiver implementation
-- macOS and Windows screen capture backends
-- Packaging (Flatpak, Homebrew, Winget, AUR)
-- Testing against real-world AirPlay and Miracast hardware
+The most useful thing most people can do costs nothing to try: **run it against
+real hardware and report what happened.** No test in this repository can
+substitute for an actual Apple TV or Miracast dongle, and a failure report is
+just as valuable as a success.
+
+Where help goes furthest:
+
+| Area | Difficulty |
+|---|---|
+| Testing against real AirPlay / Miracast hardware | Easy |
+| Documentation corrections | Easy |
+| Wiring the OpenPlay/WebRTC path to the binaries | Medium |
+| Audio support — there is none today | Medium |
+| Verifying macOS and Windows capture | Medium |
+| [Receiving AirPlay on Linux](docs/airplay-receiver-design.md) | Hard |
+
+Open an issue before a large change so the approach can be agreed first. Small
+fixes can go straight to a pull request. No CLA.
 
 ## License
 

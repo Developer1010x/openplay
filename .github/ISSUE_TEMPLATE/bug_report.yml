@@ -1,0 +1,81 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: several symptoms that look like bugs are unimplemented
+        features. The [README Status section](https://github.com/Developer1010x/openplay#status)
+        and [docs/troubleshooting.md](https://github.com/Developer1010x/openplay/blob/master/docs/troubleshooting.md)
+        list the known gaps — the OpenPlay/WebRTC path is not wired up, there is
+        no audio, and the receiver does not host sessions yet.
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Which protocol?
+      options:
+        - AirPlay
+        - Miracast (same network / MICE)
+        - Miracast (Wi-Fi Direct P2P)
+        - OpenPlay (WebRTC)
+        - Not protocol-specific (build, config, UI)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        Run with `RUST_LOG=debug` and paste the relevant portion. This is the
+        single most useful thing you can include.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and version. On Linux, also your desktop and whether Wayland or X11.
+      placeholder: "Ubuntu 24.04, GNOME, Wayland"
+    validations:
+      required: true
+
+  - type: input
+    id: gstreamer
+    attributes:
+      label: GStreamer version
+      description: "Output of `gst-inspect-1.0 --version`"
+    validations:
+      required: true
+
+  - type: input
+    id: receiver
+    attributes:
+      label: Receiver model
+      description: The device you cast to, if applicable.
+      placeholder: "Apple TV 4K (3rd gen) / LG C2 / Microsoft Wireless Display Adapter"
+
+  - type: dropdown
+    id: other-sender
+    attributes:
+      label: Does another sender work with this receiver?
+      description: |
+        UxPlay for AirPlay, miraclecast for Miracast. This separates
+        "OpenPlay is wrong" from "this receiver is unusual" and is very helpful.
+      options:
+        - Not tested
+        - "Yes — another sender works"
+        - "No — other senders fail too"
+        - Not applicable

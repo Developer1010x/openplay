@@ -14,6 +14,7 @@ first.
 | Symptom | Cause |
 |---|---|
 | Casting via "OpenPlay" does nothing, status flickers and stops | The OpenPlay/WebRTC path is not wired to the binaries |
+| Video casts but there is no sound | There is no audio support at all, on any protocol |
 | Receiver sits on "Waiting for a sender to connect…" forever | The receiver never starts a signaling server |
 | No `config.toml` appeared before commit c06e1f7 | Fixed — `AppConfig::load_or_create_at` writes the defaults on first launch |
 | AirPlay refuses an older Apple TV up front | `AppleTV2,*`/`AppleTV3,*` are rejected by model because FairPlay is unimplemented, see [crypto.md](crypto.md) |

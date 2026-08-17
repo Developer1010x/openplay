@@ -2,6 +2,10 @@
 
 Three casting paths, in decreasing order of how well they work today.
 
+All three are **video only**. Nothing in the workspace captures or transmits
+audio, even where the protocol layer advertises it — see
+[architecture.md](architecture.md#the-three-casting-paths).
+
 | Protocol | Discovery | Session setup | Transport | State |
 |---|---|---|---|---|
 | Miracast | mDNS + Wi-Fi Direct | RTSP M1–M7 | RTP/MPEG2-TS over UDP | Works |

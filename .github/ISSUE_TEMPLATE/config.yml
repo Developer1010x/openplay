@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/Developer1010x/openplay/blob/master/docs/README.md
+    about: Architecture, protocols, configuration, troubleshooting and packaging.
+  - name: Known gaps and project status
+    url: https://github.com/Developer1010x/openplay#status
+    about: What works today, what is partly built, and what is only planned.

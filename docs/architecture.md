@@ -81,6 +81,15 @@ all differ.
 The three protocol paths are documented in detail in
 [protocols.md](protocols.md).
 
+**There is no audio path at all.** No crate captures, encodes or transports
+audio — `openplay-pipeline` builds video-only pipelines throughout. This is
+easy to miss because two layers advertise audio anyway: `Capabilities` in
+`openplay-protocol` defaults `audio_codecs` to `["opus"]`, and Miracast's
+`WfdAudioCodecs` is negotiated during M3/M4. Both are declarations nothing
+honours. Adding audio means new elements in every sender pipeline plus a
+transport for each protocol (RTP for Miracast, the AirPlay audio channel,
+a WebRTC audio track).
+
 ## Key design patterns
 
 These are the conventions that are easy to violate by accident.
