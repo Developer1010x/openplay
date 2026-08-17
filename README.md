@@ -11,13 +11,45 @@ OpenPlay ships two binaries:
 
 Both are standalone GUI applications that discover each other automatically over your local network using mDNS, so there is nothing to manually configure.
 
+## Status
+
+OpenPlay is under active development. This section is the honest summary; the
+sections below describe the design, some of which is not yet connected.
+
+**Works today**
+
+- mDNS discovery of AirPlay, Miracast and OpenPlay receivers
+- Screen capture on Linux via XDG Desktop Portal and PipeWire
+- Hardware encoder probing with x264 fallback
+- Miracast sending, including Wi-Fi Direct P2P on Linux
+- Configuration loading, validation and first-run file creation
+
+**Partly built**
+
+- **AirPlay sending** — discovery, the HTTP/plist session layer, TLV8, NTP and
+  the mirror stream are implemented, but HAP pairing and FairPlay use
+  placeholder crypto constants, so real receivers reject the handshake
+  ([#8](https://github.com/Developer1010x/openplay/issues/8)).
+- **OpenPlay (WebRTC)** — the library pieces exist and are tested
+  (`SenderPipeline`, `ReceiverPipeline`, `SignalingServer`, `SignalingClient`,
+  `ReceiverAdvertiser`), but neither binary calls them yet. The sender's
+  OpenPlay path sets a status string and stops; the receiver window is a static
+  "waiting" page ([#11](https://github.com/Developer1010x/openplay/issues/11)).
+
+**Planned**
+
+- AirPlay and Miracast receiver support
+- macOS and Windows screen capture backends
+- Self-signed TLS certificates generated on first launch. `CertificateManager`
+  in `openplay-crypto` is implemented and tested, but nothing constructs it yet.
+
 ## Protocol support
 
 | Protocol | Direction | Notes |
 |---|---|---|
-| AirPlay | Sender only | Cast to Apple TV, AirPlay 2 TVs, and compatible displays |
+| AirPlay | Sender only, **not yet interoperable** | Discovery, HTTP/plist session layer, TLV8, NTP and the mirror stream are implemented, but HAP pairing and FairPlay currently use placeholder crypto constants and are rejected by real receivers. Target: Apple TV, AirPlay 2 TVs, and compatible displays. See [#8](https://github.com/Developer1010x/openplay/issues/8) |
 | Miracast / Wi-Fi Display | Sender only | Cast to Miracast adapters and smart TVs; Wi-Fi Direct P2P supported on Linux |
-| OpenPlay (WebRTC) | Sender and receiver | Native protocol between two OpenPlay instances |
+| OpenPlay (WebRTC) | Sender and receiver, **not yet wired up** | Native protocol between two OpenPlay instances. The signaling, pipeline and discovery libraries are implemented; connecting them to the two binaries is in progress. See [#11](https://github.com/Developer1010x/openplay/issues/11) |
 
 AirPlay receiver support and Miracast receiver support are planned for a future release.
 
@@ -31,7 +63,7 @@ AirPlay receiver support and Miracast receiver support are planned for a future 
   - All platforms: x264 software fallback
 - Screen capture via XDG Desktop Portal and PipeWire on Linux
 - Configurable bitrate and framerate
-- Self-signed TLS certificates generated on first launch for secure WebRTC connections
+- Self-signed TLS certificate lifecycle for securing WebRTC connections (implemented in `openplay-crypto`; not yet generated on first launch — see Status)
 - Lightweight egui GUI — no Electron, no browser runtime
 
 ## Building from source
@@ -110,7 +142,7 @@ openplay-sender
 openplay-receiver
   --config <path>   Use a custom config file
   --name <name>     Override the display name advertised on the network
-  --port <port>     Override the signaling port (default: 7654)
+  --port <port>     Override the signaling port (default: 7290)
 ```
 
 ## Configuration
@@ -125,7 +157,7 @@ Example `config.toml`:
 
 ```toml
 display_name = "My Laptop"
-port = 7654
+port = 7290
 max_bitrate_kbps = 6000
 framerate = 30
 force_sw_encode = false
@@ -137,24 +169,26 @@ Configuration values are validated against supported ranges on load: the display
 
 ## Repository layout
 
+A flat Cargo workspace of eleven crates. The two binaries are
+`openplay-sender` and `openplay-receiver`; everything else is a library used by
+one or both.
+
 ```
 openplay/
-  sender/
-    airplay/       AirPlay protocol implementation (HAP pairing, FairPlay, mirror stream)
-    miracast/      Miracast / Wi-Fi Display protocol (RTSP, WFD, Wi-Fi Direct)
-    webrtc/        Sender application and WebRTC casting logic
-  receiver/
-    airplay/       AirPlay receiver (planned)
-    miracast/      Miracast receiver (planned)
-    webrtc/        Receiver application and WebRTC pipeline
-  shared/
-    common/        Configuration, logging, XDG paths
-    crypto/        TLS certificate generation and management
-    protocol/      WebRTC signaling message types
-    capture/       Screen capture abstraction (XDG Portal / PipeWire on Linux)
-    discovery/     mDNS service advertisement and browsing
-    pipeline/      GStreamer pipeline construction and encoder selection
-    signaling/     WebSocket signaling server and client
+  crates/
+    openplay-sender/      Binary: sender GUI (egui), receiver list, casting logic
+    openplay-receiver/    Binary: receiver GUI (egui), display window
+    openplay-airplay/     AirPlay protocol: HAP pairing, FairPlay, NTP, mirror stream, TLV8
+    openplay-miracast/    Miracast / Wi-Fi Display: RTSP, WFD params, Wi-Fi Direct (Linux)
+    openplay-signaling/   WebSocket signaling client and server
+    openplay-protocol/    OpenPlay signaling wire format and state machine
+    openplay-discovery/   mDNS advertisement and browsing
+    openplay-pipeline/    GStreamer pipeline construction and encoder probing
+    openplay-capture/     Screen capture abstraction (XDG Portal / PipeWire on Linux)
+    openplay-crypto/      Self-signed TLS certificate lifecycle
+    openplay-common/      Configuration, logging, XDG paths, shared constants
+  data/                   Desktop entry, AppStream metainfo, icons, D-Bus and polkit files
+  flatpak/                Flatpak manifest
 ```
 
 ## Contributing
