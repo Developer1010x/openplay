@@ -191,10 +191,7 @@ impl WfdClientRtpPorts {
 }
 
 /// Negotiates the best resolution between source and sink capabilities.
-pub fn negotiate_resolution(
-    source: &WfdVideoFormats,
-    sink: &WfdVideoFormats,
-) -> (u32, u32, u32) {
+pub fn negotiate_resolution(source: &WfdVideoFormats, sink: &WfdVideoFormats) -> (u32, u32, u32) {
     let common_cea = source.cea_resolutions.0 & sink.cea_resolutions.0;
 
     // Prefer highest resolution
@@ -234,7 +231,8 @@ mod tests {
 
     #[test]
     fn test_cea_resolution_bitmask() {
-        let cea = CeaResolutions(CeaResolutions::RES_1920X1080_P30 | CeaResolutions::RES_1280X720_P30);
+        let cea =
+            CeaResolutions(CeaResolutions::RES_1920X1080_P30 | CeaResolutions::RES_1280X720_P30);
         assert!(cea.supports(CeaResolutions::RES_1920X1080_P30));
         assert!(cea.supports(CeaResolutions::RES_1280X720_P30));
         assert!(!cea.supports(CeaResolutions::RES_1920X1080_P60));

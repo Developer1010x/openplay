@@ -77,7 +77,10 @@ pub async fn fp_setup(stream: &mut TcpStream) -> anyhow::Result<FairPlayKeys> {
     debug!("FairPlay challenge received ({} bytes)", challenge.len());
 
     if challenge.len() < 4 {
-        return Err(anyhow::anyhow!("FairPlay challenge too short: {} bytes", challenge.len()));
+        return Err(anyhow::anyhow!(
+            "FairPlay challenge too short: {} bytes",
+            challenge.len()
+        ));
     }
 
     // Round 2: Process challenge and compute response
@@ -115,7 +118,7 @@ fn build_setup_message() -> Vec<u8> {
 
     // Version
     msg.push(FP_VERSION); // major
-    msg.push(0x01);       // minor
+    msg.push(0x01); // minor
 
     // Phase = 1 (setup)
     msg.push(0x01);
@@ -266,7 +269,8 @@ async fn recv_fp_setup(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
                 }
             }
 
-            let content_length = header_str.lines()
+            let content_length = header_str
+                .lines()
                 .find_map(|line| {
                     line.strip_prefix("Content-Length: ")
                         .or_else(|| line.strip_prefix("content-length: "))
@@ -335,8 +339,10 @@ mod tests {
 
     #[test]
     fn test_process_challenge_short() {
-        let challenge = vec![0x46, 0x50, 0x4C, 0x59, 0x03, 0x01, 0x02, 0x00,
-                             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let challenge = vec![
+            0x46, 0x50, 0x4C, 0x59, 0x03, 0x01, 0x02, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+            0x07, 0x08,
+        ];
         let (response, key, iv) = process_challenge_short(&challenge).unwrap();
         assert_eq!(&response[0..4], b"FPLY");
         assert_eq!(response[6], FP_TYPE_RESPONSE);

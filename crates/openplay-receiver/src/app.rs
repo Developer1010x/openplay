@@ -1,5 +1,5 @@
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use openplay_common::AppConfig;
@@ -11,9 +11,7 @@ const APP_ID: &str = "org.openplay.Receiver";
 
 /// Runs the GTK4 receiver application and returns the exit code.
 pub fn run(config: AppConfig) -> i32 {
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .build();
+    let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.connect_activate(move |app| {
         let window = ReceiverWindow::new(app, &config);

@@ -21,10 +21,7 @@ impl AirPlayTxtRecord {
     /// Parses AirPlay TXT record from mDNS key=value properties.
     pub fn from_properties(props: &[(String, String)]) -> Option<Self> {
         let get = |key: &str| -> Option<String> {
-            props
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.clone())
+            props.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
         };
 
         // AirPlay TXT records must at least have deviceid + features
@@ -67,9 +64,7 @@ mod tests {
 
     #[test]
     fn test_parse_minimal_txt_record() {
-        let props = vec![
-            ("deviceid".to_string(), "11:22:33:44:55:66".to_string()),
-        ];
+        let props = vec![("deviceid".to_string(), "11:22:33:44:55:66".to_string())];
 
         let record = AirPlayTxtRecord::from_properties(&props).unwrap();
         assert_eq!(record.device_id, "11:22:33:44:55:66");
@@ -78,9 +73,7 @@ mod tests {
 
     #[test]
     fn test_parse_missing_deviceid() {
-        let props = vec![
-            ("features".to_string(), "0x5A7FFFF7".to_string()),
-        ];
+        let props = vec![("features".to_string(), "0x5A7FFFF7".to_string())];
         assert!(AirPlayTxtRecord::from_properties(&props).is_none());
     }
 }

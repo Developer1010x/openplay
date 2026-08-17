@@ -39,7 +39,10 @@ impl CaptureSession {
     /// Starts a capture session by querying the primary display resolution.
     pub async fn start() -> Result<Self, CaptureError> {
         let (width, height) = query_primary_display_size();
-        info!(width, height, "Desktop capture session ready (native GStreamer source)");
+        info!(
+            width,
+            height, "Desktop capture session ready (native GStreamer source)"
+        );
 
         Ok(Self {
             sources: vec![CaptureSource {
@@ -62,16 +65,12 @@ impl CaptureSession {
 
     /// Width of the primary display.
     pub fn width(&self) -> u32 {
-        self.primary_source()
-            .and_then(|s| s.width)
-            .unwrap_or(1920)
+        self.primary_source().and_then(|s| s.width).unwrap_or(1920)
     }
 
     /// Height of the primary display.
     pub fn height(&self) -> u32 {
-        self.primary_source()
-            .and_then(|s| s.height)
-            .unwrap_or(1080)
+        self.primary_source().and_then(|s| s.height).unwrap_or(1080)
     }
 }
 

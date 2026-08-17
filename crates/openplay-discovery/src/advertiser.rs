@@ -12,8 +12,8 @@ pub struct ReceiverAdvertiser {
 impl ReceiverAdvertiser {
     /// Creates a new advertiser and registers the service.
     pub fn new(txt_record: &TxtRecord) -> Result<Self, DiscoveryError> {
-        let daemon =
-            ServiceDaemon::new().map_err(|e| DiscoveryError::Mdns(format!("Failed to create mDNS daemon: {e}")))?;
+        let daemon = ServiceDaemon::new()
+            .map_err(|e| DiscoveryError::Mdns(format!("Failed to create mDNS daemon: {e}")))?;
 
         let instance_name = format!("{}.{}", txt_record.display_name, SERVICE_TYPE);
         let host_name = format!(
@@ -39,9 +39,9 @@ impl ReceiverAdvertiser {
         )
         .map_err(|e| DiscoveryError::Registration(format!("Failed to create service info: {e}")))?;
 
-        daemon
-            .register(service)
-            .map_err(|e| DiscoveryError::Registration(format!("Failed to register service: {e}")))?;
+        daemon.register(service).map_err(|e| {
+            DiscoveryError::Registration(format!("Failed to register service: {e}"))
+        })?;
 
         info!(
             name = %txt_record.display_name,

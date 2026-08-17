@@ -122,7 +122,14 @@ impl ReceiverPipeline {
         ])
         .map_err(|e| PipelineError::Gstreamer(format!("Failed to link decode chain: {e}")))?;
 
-        for elem in [&depay, &parse, &decoder, &convert, &rgba_caps, appsink.upcast_ref()] {
+        for elem in [
+            &depay,
+            &parse,
+            &decoder,
+            &convert,
+            &rgba_caps,
+            appsink.upcast_ref(),
+        ] {
             elem.sync_state_with_parent()
                 .map_err(|e| PipelineError::StateChange(format!("Failed to sync state: {e}")))?;
         }

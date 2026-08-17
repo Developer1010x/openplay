@@ -1,4 +1,4 @@
-use openplay_capture::{CaptureError, detect_session_type};
+use openplay_capture::{detect_session_type, CaptureError};
 
 #[test]
 fn detect_session_type_returns_without_panic() {

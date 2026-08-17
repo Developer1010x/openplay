@@ -25,9 +25,9 @@ impl NtpServer {
     ///
     /// Binds to `0.0.0.0:port` and responds to NTP queries.
     pub async fn start(port: u16) -> Result<Self, AirPlayError> {
-        let socket = UdpSocket::bind(("0.0.0.0", port))
-            .await
-            .map_err(|e| AirPlayError::Ntp(format!("Failed to bind NTP socket on port {port}: {e}")))?;
+        let socket = UdpSocket::bind(("0.0.0.0", port)).await.map_err(|e| {
+            AirPlayError::Ntp(format!("Failed to bind NTP socket on port {port}: {e}"))
+        })?;
 
         let local_addr = socket
             .local_addr()
@@ -172,7 +172,7 @@ mod tests {
         // VN=4, Mode=4 (server)
         assert_eq!(response[0] & 0x07, 4); // mode=server
         assert_eq!((response[0] >> 3) & 0x07, 4); // VN=4
-        // Stratum 1
+                                                  // Stratum 1
         assert_eq!(response[1], 1);
         // Reference ID = "AIRP"
         assert_eq!(&response[12..16], b"AIRP");

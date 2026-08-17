@@ -63,9 +63,16 @@ impl AirPlaySession {
         let session_id = uuid::Uuid::new_v4().to_string();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                run_session(receiver_addr, width, height, fps, session_id, cmd_rx, evt_tx.clone())
-                    .await
+            if let Err(e) = run_session(
+                receiver_addr,
+                width,
+                height,
+                fps,
+                session_id,
+                cmd_rx,
+                evt_tx.clone(),
+            )
+            .await
             {
                 error!(%e, "AirPlay session error");
                 let _ = evt_tx.send(SessionEvent::Ended(Some(e))).await;
@@ -121,7 +128,9 @@ async fn run_session(
     info!("NTP server running on port {}", AIRPLAY_NTP_PORT);
 
     // Step 2: HTTP negotiate — try basic first, then authenticated if needed
-    let negotiated = match http_session::negotiate(receiver_addr, width, height, fps, &session_id).await {
+    let negotiated = match http_session::negotiate(receiver_addr, width, height, fps, &session_id)
+        .await
+    {
         Ok(n) => {
             info!("AirPlay negotiation complete (no auth required)");
             n
@@ -217,7 +226,8 @@ async fn negotiate_with_auth(
 
     // Step 3: Try HAP transient pair-setup (no PIN, for AirPlay 2 devices)
     info!("Attempting HAP transient pairing (no PIN)");
-    let pair_result = hap_pairing::pair_setup_transient(receiver_addr).await
+    let pair_result = hap_pairing::pair_setup_transient(receiver_addr)
+        .await
         .map_err(|e| AirPlayError::Pairing(format!("Transient pairing failed: {e}")))?;
 
     info!("Transient pair-setup succeeded, starting pair-verify");
@@ -230,8 +240,10 @@ async fn negotiate_with_auth(
         client_ltpk: pair_result.client_ltpk,
     };
 
-    let (mut verified_stream, _verify_result) = hap_pairing::pair_verify(receiver_addr, &paired_device).await
-        .map_err(|e| AirPlayError::Pairing(format!("Pair-verify failed: {e}")))?;
+    let (mut verified_stream, _verify_result) =
+        hap_pairing::pair_verify(receiver_addr, &paired_device)
+            .await
+            .map_err(|e| AirPlayError::Pairing(format!("Pair-verify failed: {e}")))?;
 
     info!("Pair-verify succeeded, sending POST /stream");
 
@@ -246,12 +258,16 @@ async fn negotiate_with_auth(
 }
 
 /// Simple HTTP response reader for the FairPlay flow.
-async fn read_http_response_simple(stream: &mut TcpStream) -> Result<(String, Vec<u8>), AirPlayError> {
+async fn read_http_response_simple(
+    stream: &mut TcpStream,
+) -> Result<(String, Vec<u8>), AirPlayError> {
     let mut buf = vec![0u8; 8192];
     let mut total = 0;
 
     loop {
-        let n = stream.read(&mut buf[total..]).await
+        let n = stream
+            .read(&mut buf[total..])
+            .await
             .map_err(|e| AirPlayError::Http(format!("Read failed: {e}")))?;
         if n == 0 {
             return Err(AirPlayError::Http("Connection closed".to_string()));
@@ -262,7 +278,8 @@ async fn read_http_response_simple(stream: &mut TcpStream) -> Result<(String, Ve
             let headers = String::from_utf8_lossy(&buf[..pos]).to_string();
             let body_start = pos + 4;
 
-            let content_length = headers.lines()
+            let content_length = headers
+                .lines()
                 .find_map(|line| {
                     line.strip_prefix("Content-Length:")
                         .or_else(|| line.strip_prefix("content-length:"))
@@ -273,9 +290,13 @@ async fn read_http_response_simple(stream: &mut TcpStream) -> Result<(String, Ve
             let mut body = buf[body_start..total].to_vec();
             while body.len() < content_length {
                 let mut tmp = vec![0u8; content_length - body.len()];
-                let n = stream.read(&mut tmp).await
+                let n = stream
+                    .read(&mut tmp)
+                    .await
                     .map_err(|e| AirPlayError::Http(format!("Read body failed: {e}")))?;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 body.extend_from_slice(&tmp[..n]);
             }
 

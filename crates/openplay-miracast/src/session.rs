@@ -212,7 +212,8 @@ async fn run_wifi_direct_session(
 
     // Step 3: Initiate P2P Connect with GO intent=0 (prefer client role)
     info!(peer = %peer_address, "Initiating P2P Connect (go_intent=0, pbc)");
-    manager.connect(peer_address)
+    manager
+        .connect(peer_address)
         .await
         .map_err(|e| MiracastError::Connection(format!("P2P Connect failed: {e}")))?;
 
@@ -224,38 +225,45 @@ async fn run_wifi_direct_session(
 
     while group_start.elapsed() < group_timeout {
         match tokio::time::timeout(Duration::from_secs(5), wfd_events.recv()).await {
-            Ok(Some(event)) => {
-                match event {
-                    WifiDirectEvent::GroupFormed(info) => {
-                        info!(
-                            iface = %info.interface_name,
-                            peer_ip = %info.peer_ip,
-                            "P2P group formed!"
-                        );
-                        group_info = Some(info);
-                        break;
-                    }
-                    WifiDirectEvent::Error(e) => {
-                        error!(error = %e, "P2P group formation error");
-                        manager.disconnect().await.ok();
-                        return Err(MiracastError::Connection(format!("P2P group formation failed: {e}")));
-                    }
-                    WifiDirectEvent::GroupRemoved => {
-                        error!("P2P group removed unexpectedly");
-                        return Err(MiracastError::Connection("P2P group removed before session started".to_string()));
-                    }
-                    other => {
-                        info!(event = ?other, "P2P event during group formation");
-                    }
+            Ok(Some(event)) => match event {
+                WifiDirectEvent::GroupFormed(info) => {
+                    info!(
+                        iface = %info.interface_name,
+                        peer_ip = %info.peer_ip,
+                        "P2P group formed!"
+                    );
+                    group_info = Some(info);
+                    break;
                 }
-            }
+                WifiDirectEvent::Error(e) => {
+                    error!(error = %e, "P2P group formation error");
+                    manager.disconnect().await.ok();
+                    return Err(MiracastError::Connection(format!(
+                        "P2P group formation failed: {e}"
+                    )));
+                }
+                WifiDirectEvent::GroupRemoved => {
+                    error!("P2P group removed unexpectedly");
+                    return Err(MiracastError::Connection(
+                        "P2P group removed before session started".to_string(),
+                    ));
+                }
+                other => {
+                    info!(event = ?other, "P2P event during group formation");
+                }
+            },
             Ok(None) => {
                 error!("P2P event channel closed");
-                return Err(MiracastError::Connection("P2P event channel closed".to_string()));
+                return Err(MiracastError::Connection(
+                    "P2P event channel closed".to_string(),
+                ));
             }
             Err(_) => {
                 // Timeout on this recv, keep waiting
-                info!(elapsed_s = group_start.elapsed().as_secs(), "Still waiting for P2P group...");
+                info!(
+                    elapsed_s = group_start.elapsed().as_secs(),
+                    "Still waiting for P2P group..."
+                );
             }
         }
     }
@@ -285,8 +293,9 @@ async fn run_wifi_direct_session(
     let bind_addr = format!("0.0.0.0:{rtsp_port}");
     info!(bind = %bind_addr, "Starting RTSP server, waiting for sink...");
 
-    let listener = TcpListener::bind(&bind_addr).await
-        .map_err(|e| MiracastError::Connection(format!("RTSP listen on {bind_addr} failed: {e}")))?;
+    let listener = TcpListener::bind(&bind_addr).await.map_err(|e| {
+        MiracastError::Connection(format!("RTSP listen on {bind_addr} failed: {e}"))
+    })?;
 
     // Wait for sink to connect, with fallback to connect to sink
     let (stream, sink_tcp_addr) = tokio::select! {
@@ -329,13 +338,15 @@ async fn run_wifi_direct_session(
         "Miracast (Wi-Fi Direct) negotiation complete"
     );
 
-    let _ = evt_tx.send(SessionEvent::Ready {
-        width: result.width,
-        height: result.height,
-        fps: result.fps,
-        rtp_port: result.rtp_port,
-        sink_addr: result.sink_addr,
-    }).await;
+    let _ = evt_tx
+        .send(SessionEvent::Ready {
+            width: result.width,
+            height: result.height,
+            fps: result.fps,
+            rtp_port: result.rtp_port,
+            sink_addr: result.sink_addr,
+        })
+        .await;
 
     // Keep alive until shutdown
     let _ = evt_tx.send(SessionEvent::Ended(None)).await;

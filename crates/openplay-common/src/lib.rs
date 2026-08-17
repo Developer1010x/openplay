@@ -3,9 +3,7 @@ mod error;
 mod logging;
 mod paths;
 
-pub use config::{
-    AppConfig, MAX_BITRATE_KBPS, MAX_FRAMERATE, MIN_BITRATE_KBPS, MIN_FRAMERATE,
-};
+pub use config::{AppConfig, MAX_BITRATE_KBPS, MAX_FRAMERATE, MIN_BITRATE_KBPS, MIN_FRAMERATE};
 pub use error::OpenPlayError;
 pub use logging::init_logging;
 pub use paths::{config_dir, data_dir, ensure_dirs};

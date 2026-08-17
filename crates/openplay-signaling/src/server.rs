@@ -38,8 +38,7 @@ impl SignalingServer {
 
         info!(addr = %self.addr, "Signaling server listening");
 
-        let tls_acceptor =
-            tokio_rustls::TlsAcceptor::from(self.tls_config.clone());
+        let tls_acceptor = tokio_rustls::TlsAcceptor::from(self.tls_config.clone());
 
         loop {
             let (tcp_stream, peer_addr) = match listener.accept().await {
@@ -66,14 +65,13 @@ impl SignalingServer {
                 };
 
                 // WebSocket upgrade over the TLS stream
-                let ws_stream =
-                    match tokio_tungstenite::accept_async(tls_stream).await {
-                        Ok(ws) => ws,
-                        Err(e) => {
-                            warn!(peer = %peer_addr, "WebSocket upgrade failed: {e}");
-                            return;
-                        }
-                    };
+                let ws_stream = match tokio_tungstenite::accept_async(tls_stream).await {
+                    Ok(ws) => ws,
+                    Err(e) => {
+                        warn!(peer = %peer_addr, "WebSocket upgrade failed: {e}");
+                        return;
+                    }
+                };
 
                 info!(peer = %peer_addr, "WebSocket connection established");
 
@@ -106,11 +104,7 @@ impl SignalingServer {
                             match serde_json::from_str::<SignalingMessage>(&text) {
                                 Ok(msg) => {
                                     debug!(peer = %peer_addr, msg_type = ?std::mem::discriminant(&msg), "Received message");
-                                    if incoming_tx
-                                        .send((msg, response_tx.clone()))
-                                        .await
-                                        .is_err()
-                                    {
+                                    if incoming_tx.send((msg, response_tx.clone())).await.is_err() {
                                         debug!("Incoming message channel closed");
                                         break;
                                     }

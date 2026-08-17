@@ -135,19 +135,16 @@ async fn post_stream(
     params.insert("width".to_string(), plist::Value::Integer(width.into()));
     params.insert("height".to_string(), plist::Value::Integer(height.into()));
     params.insert("fps".to_string(), plist::Value::Integer(fps.into()));
-    params.insert(
-        "overscanned".to_string(),
-        plist::Value::Boolean(false),
-    );
-    params.insert(
-        "refreshRate".to_string(),
-        plist::Value::Real(fps as f64),
-    );
+    params.insert("overscanned".to_string(), plist::Value::Boolean(false));
+    params.insert("refreshRate".to_string(), plist::Value::Real(fps as f64));
     params.insert(
         "sessionID".to_string(),
         plist::Value::String(session_id.to_string()),
     );
-    params.insert("version".to_string(), plist::Value::String("1.0".to_string()));
+    params.insert(
+        "version".to_string(),
+        plist::Value::String("1.0".to_string()),
+    );
 
     let plist_value = plist::Value::Dictionary(params.into_iter().collect());
     let mut body = Vec::new();
@@ -198,7 +195,9 @@ async fn read_http_response(stream: &mut TcpStream) -> Result<(String, Vec<u8>),
             .await
             .map_err(|e| AirPlayError::Http(format!("Read error: {e}")))?;
         if n == 0 {
-            return Err(AirPlayError::Http("Connection closed during HTTP response".to_string()));
+            return Err(AirPlayError::Http(
+                "Connection closed during HTTP response".to_string(),
+            ));
         }
 
         if let Some(pos) = find_header_end(&buf) {
@@ -244,7 +243,8 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 
 fn parse_content_length(headers: &str) -> Option<usize> {
     for line in headers.lines() {
-        if let Some(val) = line.strip_prefix("Content-Length:")
+        if let Some(val) = line
+            .strip_prefix("Content-Length:")
             .or_else(|| line.strip_prefix("content-length:"))
         {
             return val.trim().parse().ok();

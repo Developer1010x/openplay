@@ -117,22 +117,34 @@ pub fn decode(data: &[u8]) -> Result<Vec<Tlv8Item>, DecodeError> {
 
 /// Look up a tag in decoded TLV items, returning its value.
 pub fn lookup(items: &[Tlv8Item], tag: u8) -> Option<&[u8]> {
-    items.iter().find(|item| item.tag == tag).map(|item| item.value.as_slice())
+    items
+        .iter()
+        .find(|item| item.tag == tag)
+        .map(|item| item.value.as_slice())
 }
 
 /// Convert decoded TLV items into a map for easy access.
 pub fn to_map(items: &[Tlv8Item]) -> BTreeMap<u8, Vec<u8>> {
-    items.iter().map(|item| (item.tag, item.value.clone())).collect()
+    items
+        .iter()
+        .map(|item| (item.tag, item.value.clone()))
+        .collect()
 }
 
 /// Helper to build a TLV item.
 pub fn item(tag: u8, value: impl Into<Vec<u8>>) -> Tlv8Item {
-    Tlv8Item { tag, value: value.into() }
+    Tlv8Item {
+        tag,
+        value: value.into(),
+    }
 }
 
 /// Helper for a single-byte value.
 pub fn item_u8(tag: u8, value: u8) -> Tlv8Item {
-    Tlv8Item { tag, value: vec![value] }
+    Tlv8Item {
+        tag,
+        value: vec![value],
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -173,7 +185,10 @@ mod tests {
     #[test]
     fn test_fragmentation() {
         let big_value = vec![0xAB; 300];
-        let items = vec![Tlv8Item { tag: tags::PUBLIC_KEY, value: big_value.clone() }];
+        let items = vec![Tlv8Item {
+            tag: tags::PUBLIC_KEY,
+            value: big_value.clone(),
+        }];
 
         let encoded = encode(&items);
 
@@ -191,7 +206,10 @@ mod tests {
 
     #[test]
     fn test_empty_value() {
-        let items = vec![Tlv8Item { tag: tags::SEPARATOR, value: vec![] }];
+        let items = vec![Tlv8Item {
+            tag: tags::SEPARATOR,
+            value: vec![],
+        }];
         let encoded = encode(&items);
         assert_eq!(encoded, &[0xFF, 0x00]);
 
@@ -203,10 +221,7 @@ mod tests {
 
     #[test]
     fn test_lookup() {
-        let items = vec![
-            item_u8(tags::STATE, 2),
-            item(tags::SALT, vec![1, 2, 3, 4]),
-        ];
+        let items = vec![item_u8(tags::STATE, 2), item(tags::SALT, vec![1, 2, 3, 4])];
 
         assert_eq!(lookup(&items, tags::STATE), Some(&[2u8][..]));
         assert_eq!(lookup(&items, tags::SALT), Some(&[1, 2, 3, 4][..]));

@@ -108,7 +108,9 @@ impl DiscoveredReceiver {
             DiscoveredReceiver::AirPlay(r) => r.name.clone(),
             DiscoveredReceiver::Miracast(r) => match &r.mode {
                 MiracastMode::Infrastructure { addr, .. } => format!("miracast-{addr}"),
-                MiracastMode::WifiDirect { device_address } => format!("miracast-p2p-{device_address}"),
+                MiracastMode::WifiDirect { device_address } => {
+                    format!("miracast-p2p-{device_address}")
+                }
             },
         }
     }

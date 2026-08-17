@@ -6,8 +6,7 @@ const ORG: &str = "openplay";
 const APP: &str = "OpenPlay";
 
 fn project_dirs() -> ProjectDirs {
-    ProjectDirs::from(QUALIFIER, ORG, APP)
-        .expect("Failed to determine XDG directories")
+    ProjectDirs::from(QUALIFIER, ORG, APP).expect("Failed to determine XDG directories")
 }
 
 /// Returns `$XDG_CONFIG_HOME/openplay/` (e.g. `~/.config/openplay/`).

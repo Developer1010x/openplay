@@ -65,7 +65,10 @@ fn ntp_timestamp_in_ntp_epoch() {
     // In NTP fixed-point (upper 32 bits = seconds), value >> 32 gives seconds.
     let ts = ntp_timestamp_now();
     let seconds = ts >> 32;
-    assert!(seconds > 3_900_000_000, "Expected modern NTP seconds, got {seconds}");
+    assert!(
+        seconds > 3_900_000_000,
+        "Expected modern NTP seconds, got {seconds}"
+    );
 }
 
 // ── TLV8 ─────────────────────────────────────────────────────────────────────
@@ -113,10 +116,7 @@ fn item_u8_helper() {
 
 #[test]
 fn lookup_finds_item_by_tag() {
-    let items = vec![
-        tlv8::item(0x01, b"one"),
-        tlv8::item(0x02, b"two"),
-    ];
+    let items = vec![tlv8::item(0x01, b"one"), tlv8::item(0x02, b"two")];
     assert_eq!(tlv8::lookup(&items, 0x01), Some(b"one".as_ref()));
     assert_eq!(tlv8::lookup(&items, 0x02), Some(b"two".as_ref()));
     assert_eq!(tlv8::lookup(&items, 0x99), None);
@@ -151,10 +151,7 @@ fn fragmentation_of_large_value() {
 
 #[test]
 fn to_map_indexes_by_tag() {
-    let items = vec![
-        tlv8::item(0x01, b"alpha"),
-        tlv8::item(0x02, b"beta"),
-    ];
+    let items = vec![tlv8::item(0x01, b"alpha"), tlv8::item(0x02, b"beta")];
     let map = tlv8::to_map(&items);
     assert_eq!(map[&0x01], b"alpha");
     assert_eq!(map[&0x02], b"beta");

@@ -69,7 +69,10 @@ impl AirPlayFeatures {
 }
 
 fn parse_hex(s: &str) -> u64 {
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     u64::from_str_radix(s, 16).unwrap_or(0)
 }
 

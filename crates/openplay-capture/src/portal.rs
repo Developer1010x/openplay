@@ -103,9 +103,7 @@ impl CaptureSession {
         let pw_fd = proxy
             .open_pipe_wire_remote(&session)
             .await
-            .map_err(|e| {
-                CaptureError::Portal(format!("Failed to open PipeWire remote: {e}"))
-            })?;
+            .map_err(|e| CaptureError::Portal(format!("Failed to open PipeWire remote: {e}")))?;
 
         use std::os::unix::io::IntoRawFd;
         let raw_fd = pw_fd.into_raw_fd();

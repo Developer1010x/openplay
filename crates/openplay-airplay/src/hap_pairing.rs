@@ -89,7 +89,11 @@ pub async fn pair_setup(addr: SocketAddr, pin: &str) -> anyhow::Result<PairSetup
     pair_setup_internal(addr, pin, false).await
 }
 
-async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> anyhow::Result<PairSetupResult> {
+async fn pair_setup_internal(
+    addr: SocketAddr,
+    pin: &str,
+    transient: bool,
+) -> anyhow::Result<PairSetupResult> {
     let mut stream = TcpStream::connect(addr).await?;
     info!(%addr, transient, "Starting HAP pair-setup");
 
@@ -117,10 +121,14 @@ async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> an
 
     let server_pk_bytes = tlv8::lookup(&m2, tlv8::tags::PUBLIC_KEY)
         .ok_or_else(|| anyhow::anyhow!("M2: missing server public key"))?;
-    let salt = tlv8::lookup(&m2, tlv8::tags::SALT)
-        .ok_or_else(|| anyhow::anyhow!("M2: missing salt"))?;
+    let salt =
+        tlv8::lookup(&m2, tlv8::tags::SALT).ok_or_else(|| anyhow::anyhow!("M2: missing salt"))?;
 
-    debug!(server_pk_len = server_pk_bytes.len(), salt_len = salt.len(), "M2 received");
+    debug!(
+        server_pk_len = server_pk_bytes.len(),
+        salt_len = salt.len(),
+        "M2 received"
+    );
 
     // SRP-6a client computation
     let n = BigUint::parse_bytes(SRP_N_HEX.as_bytes(), 16)
@@ -187,7 +195,11 @@ async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> an
     let proof_m1 = {
         let hash_n = Sha512::digest(&n.to_bytes_be());
         let hash_g = Sha512::digest(&pad_to_n(&g, &n));
-        let hash_xor: Vec<u8> = hash_n.iter().zip(hash_g.iter()).map(|(a, b)| a ^ b).collect();
+        let hash_xor: Vec<u8> = hash_n
+            .iter()
+            .zip(hash_g.iter())
+            .map(|(a, b)| a ^ b)
+            .collect();
         let hash_user = Sha512::digest(PAIR_SETUP_USERNAME.as_bytes());
 
         let mut h = Sha512::new();
@@ -266,10 +278,13 @@ async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> an
         tlv8::item(tlv8::tags::SIGNATURE, device_sig.to_bytes().to_vec()),
     ]);
 
-    let enc_key_arr: [u8; 32] = enc_key.try_into().map_err(|_| anyhow::anyhow!("key length"))?;
+    let enc_key_arr: [u8; 32] = enc_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("key length"))?;
     let cipher = ChaCha20Poly1305::new(&enc_key_arr.into());
     let nonce = Nonce::from_slice(b"PS-Msg05\x00\x00\x00\x00");
-    let encrypted = cipher.encrypt(nonce, sub_tlv.as_ref())
+    let encrypted = cipher
+        .encrypt(nonce, sub_tlv.as_ref())
         .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
 
     // M5: Client → Server: State=5, EncryptedData
@@ -289,7 +304,8 @@ async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> an
         .ok_or_else(|| anyhow::anyhow!("M6: missing encrypted data"))?;
 
     let nonce6 = Nonce::from_slice(b"PS-Msg06\x00\x00\x00\x00");
-    let m6_decrypted = cipher.decrypt(nonce6, m6_encrypted)
+    let m6_decrypted = cipher
+        .decrypt(nonce6, m6_encrypted)
         .map_err(|e| anyhow::anyhow!("M6 decryption failed: {e}"))?;
 
     let m6_sub = tlv8::decode(&m6_decrypted)?;
@@ -314,10 +330,12 @@ async fn pair_setup_internal(addr: SocketAddr, pin: &str, transient: bool) -> an
     accessory_info.extend_from_slice(accessory_id);
     accessory_info.extend_from_slice(accessory_ltpk_bytes);
 
-    let accessory_pk: [u8; 32] = accessory_ltpk_bytes.try_into()
+    let accessory_pk: [u8; 32] = accessory_ltpk_bytes
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid accessory LTPK length"))?;
     let accessory_verifying = VerifyingKey::from_bytes(&accessory_pk)?;
-    let sig_bytes: [u8; 64] = accessory_sig.try_into()
+    let sig_bytes: [u8; 64] = accessory_sig
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     accessory_verifying.verify(&accessory_info, &signature)?;
@@ -368,7 +386,8 @@ pub async fn pair_verify(
         .ok_or_else(|| anyhow::anyhow!("M2: missing encrypted data"))?;
 
     // Compute shared secret via X25519
-    let server_epk: [u8; 32] = server_epk_bytes.try_into()
+    let server_epk: [u8; 32] = server_epk_bytes
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid server EPK length"))?;
     let server_public = X25519PublicKey::from(server_epk);
     let shared_secret = client_secret.diffie_hellman(&server_public);
@@ -381,12 +400,15 @@ pub async fn pair_verify(
         32,
     )?;
 
-    let key_arr: [u8; 32] = session_key.try_into().map_err(|_| anyhow::anyhow!("key len"))?;
+    let key_arr: [u8; 32] = session_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("key len"))?;
     let cipher = ChaCha20Poly1305::new(&key_arr.into());
 
     // Decrypt M2 encrypted data
     let nonce2 = Nonce::from_slice(b"PV-Msg02\x00\x00\x00\x00");
-    let m2_plain = cipher.decrypt(nonce2, m2_encrypted)
+    let m2_plain = cipher
+        .decrypt(nonce2, m2_encrypted)
         .map_err(|e| anyhow::anyhow!("M2 decryption failed: {e}"))?;
 
     let m2_sub = tlv8::decode(&m2_plain)?;
@@ -403,7 +425,8 @@ pub async fn pair_verify(
     server_info.extend_from_slice(client_public.as_bytes());
 
     let accessory_verifying = VerifyingKey::from_bytes(&paired.accessory_ltpk)?;
-    let sig_bytes: [u8; 64] = server_sig.try_into()
+    let sig_bytes: [u8; 64] = server_sig
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     accessory_verifying.verify(&server_info, &signature)?;
@@ -426,7 +449,8 @@ pub async fn pair_verify(
     ]);
 
     let nonce3 = Nonce::from_slice(b"PV-Msg03\x00\x00\x00\x00");
-    let encrypted = cipher.encrypt(nonce3, sub_tlv.as_ref())
+    let encrypted = cipher
+        .encrypt(nonce3, sub_tlv.as_ref())
         .map_err(|e| anyhow::anyhow!("M3 encryption failed: {e}"))?;
 
     // M3: Client → Server: State=3, EncryptedData
@@ -444,7 +468,12 @@ pub async fn pair_verify(
 
     info!("Pair-verify completed successfully");
 
-    Ok((stream, PairVerifyResult { shared_key: key_arr }))
+    Ok((
+        stream,
+        PairVerifyResult {
+            shared_key: key_arr,
+        },
+    ))
 }
 
 // --- HTTP helpers for /pair-setup and /pair-verify ---
@@ -473,7 +502,9 @@ async fn send_post(
 ) -> anyhow::Result<()> {
     let header = format!(
         "POST {} HTTP/1.1\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
-        path, content_type, body.len()
+        path,
+        content_type,
+        body.len()
     );
     stream.write_all(header.as_bytes()).await?;
     stream.write_all(body).await?;
@@ -531,7 +562,8 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
 
 fn parse_content_length(header: &str) -> Option<usize> {
     for line in header.lines() {
-        if let Some(value) = line.strip_prefix("Content-Length: ")
+        if let Some(value) = line
+            .strip_prefix("Content-Length: ")
             .or_else(|| line.strip_prefix("content-length: "))
         {
             return value.trim().parse().ok();
@@ -547,7 +579,9 @@ fn check_state(items: &[tlv8::Tlv8Item], expected: u8) -> anyhow::Result<()> {
         .and_then(|v| v.first().copied())
         .ok_or_else(|| anyhow::anyhow!("Missing state TLV"))?;
     if state != expected {
-        return Err(anyhow::anyhow!("Unexpected state: got {state}, expected {expected}"));
+        return Err(anyhow::anyhow!(
+            "Unexpected state: got {state}, expected {expected}"
+        ));
     }
     Ok(())
 }
@@ -611,13 +645,16 @@ pub fn init_paired_db(db_path: &std::path::Path) -> anyhow::Result<rusqlite::Con
             client_ltsk BLOB NOT NULL,
             client_ltpk BLOB NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );"
+        );",
     )?;
     Ok(conn)
 }
 
 /// Store a paired device.
-pub fn store_paired_device(conn: &rusqlite::Connection, device: &PairedDevice) -> anyhow::Result<()> {
+pub fn store_paired_device(
+    conn: &rusqlite::Connection,
+    device: &PairedDevice,
+) -> anyhow::Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO paired_devices (device_id, accessory_ltpk, client_ltsk, client_ltpk)
          VALUES (?1, ?2, ?3, ?4)",
@@ -632,7 +669,10 @@ pub fn store_paired_device(conn: &rusqlite::Connection, device: &PairedDevice) -
 }
 
 /// Load a paired device by ID.
-pub fn load_paired_device(conn: &rusqlite::Connection, device_id: &str) -> anyhow::Result<Option<PairedDevice>> {
+pub fn load_paired_device(
+    conn: &rusqlite::Connection,
+    device_id: &str,
+) -> anyhow::Result<Option<PairedDevice>> {
     let mut stmt = conn.prepare(
         "SELECT device_id, accessory_ltpk, client_ltsk, client_ltpk FROM paired_devices WHERE device_id = ?1"
     )?;
@@ -646,9 +686,15 @@ pub fn load_paired_device(conn: &rusqlite::Connection, device_id: &str) -> anyho
 
         Ok(Some(PairedDevice {
             device_id: id,
-            accessory_ltpk: ltpk.try_into().map_err(|_| anyhow::anyhow!("Invalid LTPK"))?,
-            client_ltsk: ltsk.try_into().map_err(|_| anyhow::anyhow!("Invalid LTSK"))?,
-            client_ltpk: ltpk_client.try_into().map_err(|_| anyhow::anyhow!("Invalid client LTPK"))?,
+            accessory_ltpk: ltpk
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid LTPK"))?,
+            client_ltsk: ltsk
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid LTSK"))?,
+            client_ltpk: ltpk_client
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid client LTPK"))?,
         }))
     } else {
         Ok(None)
@@ -658,7 +704,8 @@ pub fn load_paired_device(conn: &rusqlite::Connection, device_id: &str) -> anyho
 /// List all paired device IDs.
 pub fn list_paired_devices(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT device_id FROM paired_devices")?;
-    let ids = stmt.query_map([], |row| row.get(0))?
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
     Ok(ids)
 }
@@ -675,7 +722,10 @@ mod tests {
         assert!(n > BigUint::from(1u32));
         // 3072-bit prime should be ~384 bytes (may include leading bytes)
         let n_bytes = n.to_bytes_be().len();
-        assert!(n_bytes >= 384 && n_bytes <= 386, "N should be ~384 bytes, got {n_bytes}");
+        assert!(
+            n_bytes >= 384 && n_bytes <= 386,
+            "N should be ~384 bytes, got {n_bytes}"
+        );
     }
 
     #[test]
@@ -710,7 +760,9 @@ mod tests {
         };
 
         store_paired_device(&conn, &device).unwrap();
-        let loaded = load_paired_device(&conn, "test-device-001").unwrap().unwrap();
+        let loaded = load_paired_device(&conn, "test-device-001")
+            .unwrap()
+            .unwrap();
         assert_eq!(loaded.device_id, "test-device-001");
         assert_eq!(loaded.accessory_ltpk, [1u8; 32]);
         assert_eq!(loaded.client_ltsk, [2u8; 32]);

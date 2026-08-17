@@ -1,5 +1,5 @@
 use openplay_miracast::wfd_params::{
-    CeaResolutions, WfdAudioCodecs, WfdClientRtpPorts, WfdVideoFormats, negotiate_resolution,
+    negotiate_resolution, CeaResolutions, WfdAudioCodecs, WfdClientRtpPorts, WfdVideoFormats,
 };
 
 // ── CeaResolutions ────────────────────────────────────────────────────────────
@@ -24,7 +24,10 @@ fn cea_all_defined_constants_are_distinct_bits() {
     ];
     for i in 0..constants.len() {
         for j in (i + 1)..constants.len() {
-            assert_ne!(constants[i], constants[j], "constants[{i}] and constants[{j}] must differ");
+            assert_ne!(
+                constants[i], constants[j],
+                "constants[{i}] and constants[{j}] must differ"
+            );
             assert_eq!(
                 constants[i] & constants[j],
                 0,
@@ -92,7 +95,9 @@ fn video_formats_custom_values_roundtrip() {
     let parsed = WfdVideoFormats::parse(&encoded).unwrap();
     assert_eq!(parsed.profile, 0x02);
     assert_eq!(parsed.level, 0x20);
-    assert!(parsed.cea_resolutions.supports(CeaResolutions::RES_1920X1080_P60));
+    assert!(parsed
+        .cea_resolutions
+        .supports(CeaResolutions::RES_1920X1080_P60));
 }
 
 // ── negotiate_resolution ──────────────────────────────────────────────────────

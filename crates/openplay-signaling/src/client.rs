@@ -33,11 +33,13 @@ impl SignalingClient {
     /// - Receive `SignalingMessage` from `incoming_receiver` for messages from the receiver.
     pub async fn connect(
         self,
-    ) -> Result<(mpsc::Sender<SignalingMessage>, mpsc::Receiver<SignalingMessage>)> {
+    ) -> Result<(
+        mpsc::Sender<SignalingMessage>,
+        mpsc::Receiver<SignalingMessage>,
+    )> {
         info!(url = %self.url, "Connecting to receiver");
 
-        let connector =
-            tokio_tungstenite::Connector::Rustls(self.tls_config.clone());
+        let connector = tokio_tungstenite::Connector::Rustls(self.tls_config.clone());
 
         let (ws_stream, _response) = tokio_tungstenite::connect_async_tls_with_config(
             self.url.as_str(),
