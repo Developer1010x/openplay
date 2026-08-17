@@ -24,7 +24,7 @@ pub struct NegotiatedStream {
 }
 
 /// Parsed server info from AirPlay GET /info response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerInfo {
     /// Device model (e.g. "AppleTV5,3", "LG Smart TV", etc.).
     pub model: String,
@@ -36,18 +36,6 @@ pub struct ServerInfo {
     pub source_version: String,
     /// MAC address.
     pub mac_address: String,
-}
-
-impl Default for ServerInfo {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            device_name: String::new(),
-            features: AirPlayFeatures::default(),
-            source_version: String::new(),
-            mac_address: String::new(),
-        }
-    }
 }
 
 /// Performs AirPlay HTTP negotiation with a receiver.

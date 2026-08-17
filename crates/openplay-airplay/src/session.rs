@@ -258,6 +258,12 @@ async fn negotiate_with_auth(
 }
 
 /// Simple HTTP response reader for the FairPlay flow.
+///
+/// Currently unused: the FairPlay flow reads its own responses via `recv_fp_setup`
+/// in `fairplay.rs`, and the general HTTP path uses `read_http_response` in
+/// `http_session.rs`. Kept rather than deleted pending a decision on whether it is
+/// still needed — see #15.
+#[allow(dead_code)]
 async fn read_http_response_simple(
     stream: &mut TcpStream,
 ) -> Result<(String, Vec<u8>), AirPlayError> {

@@ -18,14 +18,15 @@ fn save_and_load_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
 
-    let mut original = AppConfig::default();
-    original.display_name = "TestDevice".to_string();
-    original.port = 9999;
-    original.max_bitrate_kbps = 8000;
-    original.framerate = 60;
-    original.force_sw_encode = true;
-    original.airplay_enabled = false;
-    original.miracast_enabled = false;
+    let original = AppConfig {
+        display_name: "TestDevice".to_string(),
+        port: 9999,
+        max_bitrate_kbps: 8000,
+        framerate: 60,
+        force_sw_encode: true,
+        airplay_enabled: false,
+        miracast_enabled: false,
+    };
 
     original.save_to(&path).unwrap();
     assert!(path.exists());
@@ -111,23 +112,29 @@ fn default_config_is_valid() {
 
 #[test]
 fn validate_rejects_empty_display_name() {
-    let mut cfg = AppConfig::default();
-    cfg.display_name = "   ".to_string();
+    let cfg = AppConfig {
+        display_name: "   ".to_string(),
+        ..Default::default()
+    };
     let err = cfg.validate().unwrap_err();
     assert!(err.to_string().contains("display_name"));
 }
 
 #[test]
 fn validate_rejects_zero_port() {
-    let mut cfg = AppConfig::default();
-    cfg.port = 0;
+    let cfg = AppConfig {
+        port: 0,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_err());
 }
 
 #[test]
 fn validate_rejects_out_of_range_bitrate() {
-    let mut cfg = AppConfig::default();
-    cfg.max_bitrate_kbps = 0;
+    let mut cfg = AppConfig {
+        max_bitrate_kbps: 0,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_err());
 
     cfg.max_bitrate_kbps = openplay_common::MAX_BITRATE_KBPS + 1;
@@ -136,8 +143,10 @@ fn validate_rejects_out_of_range_bitrate() {
 
 #[test]
 fn validate_rejects_out_of_range_framerate() {
-    let mut cfg = AppConfig::default();
-    cfg.framerate = 0;
+    let mut cfg = AppConfig {
+        framerate: 0,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_err());
 
     cfg.framerate = openplay_common::MAX_FRAMERATE + 1;
@@ -146,10 +155,12 @@ fn validate_rejects_out_of_range_framerate() {
 
 #[test]
 fn validate_accepts_boundary_values() {
-    let mut cfg = AppConfig::default();
-    cfg.max_bitrate_kbps = openplay_common::MIN_BITRATE_KBPS;
-    cfg.framerate = openplay_common::MIN_FRAMERATE;
-    cfg.port = 1;
+    let mut cfg = AppConfig {
+        max_bitrate_kbps: openplay_common::MIN_BITRATE_KBPS,
+        framerate: openplay_common::MIN_FRAMERATE,
+        port: 1,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_ok());
 
     cfg.max_bitrate_kbps = openplay_common::MAX_BITRATE_KBPS;
