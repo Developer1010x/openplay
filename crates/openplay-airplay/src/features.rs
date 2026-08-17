@@ -21,15 +21,22 @@ impl AirPlayFeatures {
     /// Handles both formats:
     /// - Single hex: `"0x5A7FFFF7"`
     /// - Split hex: `"0x5A7FFFF7,0x1E"` (lo32,hi32)
-    pub fn parse(s: &str) -> Self {
+    ///
+    /// Returns `None` if the input is not valid hex. A malformed `features`
+    /// field is not the same thing as a receiver advertising no features, so
+    /// the two cases are kept distinguishable by the caller.
+    pub fn parse(s: &str) -> Option<Self> {
         let raw = if let Some((lo_str, hi_str)) = s.split_once(',') {
-            let lo = parse_hex(lo_str.trim());
-            let hi = parse_hex(hi_str.trim());
+            // Both halves are 32-bit in this format; a wider `hi` would
+            // overflow the shift (a debug-build panic) rather than mean
+            // anything, so reject it.
+            let lo = u64::from(u32::try_from(parse_hex(lo_str.trim())?).ok()?);
+            let hi = u64::from(u32::try_from(parse_hex(hi_str.trim())?).ok()?);
             (hi << 32) | lo
         } else {
-            parse_hex(s.trim())
+            parse_hex(s.trim())?
         };
-        Self { raw }
+        Some(Self { raw })
     }
 
     /// Raw 64-bit feature value.
@@ -68,12 +75,12 @@ impl AirPlayFeatures {
     }
 }
 
-fn parse_hex(s: &str) -> u64 {
+fn parse_hex(s: &str) -> Option<u64> {
     let s = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
-    u64::from_str_radix(s, 16).unwrap_or(0)
+    u64::from_str_radix(s, 16).ok()
 }
 
 #[cfg(test)]
@@ -82,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_parse_single_hex() {
-        let f = AirPlayFeatures::parse("0x5A7FFFF7");
+        let f = AirPlayFeatures::parse("0x5A7FFFF7").unwrap();
         assert!(f.supports_mirroring()); // bit 7 is set
         assert!(f.supports_video()); // bit 0 is set
     }
@@ -90,7 +97,7 @@ mod tests {
     #[test]
     fn test_parse_split_hex() {
         // lo=0x5A7FFFF7, hi=0x1E → combined = 0x1E_5A7FFFF7
-        let f = AirPlayFeatures::parse("0x5A7FFFF7,0x1E");
+        let f = AirPlayFeatures::parse("0x5A7FFFF7,0x1E").unwrap();
         assert!(f.supports_mirroring());
         assert_eq!(f.raw() & 0xFFFFFFFF, 0x5A7FFFF7);
     }
@@ -98,14 +105,14 @@ mod tests {
     #[test]
     fn test_no_mirroring() {
         // bit 7 = 0x80, so 0x77 has bits 0-6 set but NOT bit 7
-        let f = AirPlayFeatures::parse("0x77");
+        let f = AirPlayFeatures::parse("0x77").unwrap();
         assert!(!f.supports_mirroring());
         assert!(f.supports_video());
     }
 
     #[test]
     fn test_mirroring_only() {
-        let f = AirPlayFeatures::parse("0x80");
+        let f = AirPlayFeatures::parse("0x80").unwrap();
         assert!(f.supports_mirroring());
         assert!(!f.supports_video());
     }
@@ -113,7 +120,7 @@ mod tests {
     #[test]
     fn test_hk_pairing_bit() {
         // bit 46 = 0x400000000000
-        let f = AirPlayFeatures::parse("0x0,0x4000");
+        let f = AirPlayFeatures::parse("0x0,0x4000").unwrap();
         assert!(f.requires_hk_pairing());
     }
 }

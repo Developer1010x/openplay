@@ -147,7 +147,7 @@ impl WifiDirectManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No P2P interface available"))?;
 
-        let mac_hex = peer_mac.replace(':', "").replace('-', "").to_lowercase();
+        let mac_hex = peer_mac.replace([':', '-'], "").to_lowercase();
         let peer_object_path = format!("{interface_path}/Peers/{mac_hex}");
 
         info!(peer = %peer_object_path, mac = %peer_mac, "Initiating P2P connection");
@@ -321,16 +321,6 @@ async fn run_p2p_discovery(
 
     info!("P2P discovery started, listening for peers...");
 
-    listen_for_signals(&connection, interface_path, event_tx).await
-}
-
-/// Listen for P2P signals without starting Find (for connect-only mode).
-async fn listen_p2p_signals(
-    interface_path: &str,
-    event_tx: mpsc::Sender<WifiDirectEvent>,
-) -> anyhow::Result<()> {
-    let connection = zbus::Connection::system().await?;
-    info!("P2P signal listener started (no Find scan)");
     listen_for_signals(&connection, interface_path, event_tx).await
 }
 

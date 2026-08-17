@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
@@ -255,56 +254,4 @@ async fn negotiate_with_auth(
         stream: verified_stream,
         server_info,
     })
-}
-
-/// Simple HTTP response reader for the FairPlay flow.
-async fn read_http_response_simple(
-    stream: &mut TcpStream,
-) -> Result<(String, Vec<u8>), AirPlayError> {
-    let mut buf = vec![0u8; 8192];
-    let mut total = 0;
-
-    loop {
-        let n = stream
-            .read(&mut buf[total..])
-            .await
-            .map_err(|e| AirPlayError::Http(format!("Read failed: {e}")))?;
-        if n == 0 {
-            return Err(AirPlayError::Http("Connection closed".to_string()));
-        }
-        total += n;
-
-        if let Some(pos) = buf[..total].windows(4).position(|w| w == b"\r\n\r\n") {
-            let headers = String::from_utf8_lossy(&buf[..pos]).to_string();
-            let body_start = pos + 4;
-
-            let content_length = headers
-                .lines()
-                .find_map(|line| {
-                    line.strip_prefix("Content-Length:")
-                        .or_else(|| line.strip_prefix("content-length:"))
-                        .and_then(|v| v.trim().parse::<usize>().ok())
-                })
-                .unwrap_or(0);
-
-            let mut body = buf[body_start..total].to_vec();
-            while body.len() < content_length {
-                let mut tmp = vec![0u8; content_length - body.len()];
-                let n = stream
-                    .read(&mut tmp)
-                    .await
-                    .map_err(|e| AirPlayError::Http(format!("Read body failed: {e}")))?;
-                if n == 0 {
-                    break;
-                }
-                body.extend_from_slice(&tmp[..n]);
-            }
-
-            return Ok((headers, body));
-        }
-
-        if total >= buf.len() {
-            buf.resize(buf.len() * 2, 0);
-        }
-    }
 }

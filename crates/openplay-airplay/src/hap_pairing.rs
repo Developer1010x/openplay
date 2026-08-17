@@ -146,7 +146,7 @@ async fn pair_setup_internal(
     let u = {
         let mut hasher = Sha512::new();
         hasher.update(&big_a_bytes);
-        hasher.update(&pad_to_n(&big_b, &n));
+        hasher.update(pad_to_n(&big_b, &n));
         BigUint::from_bytes_be(&hasher.finalize())
     };
 
@@ -161,15 +161,15 @@ async fn pair_setup_internal(
         };
         let mut h = Sha512::new();
         h.update(salt);
-        h.update(&inner);
+        h.update(inner);
         BigUint::from_bytes_be(&h.finalize())
     };
 
     // k = SHA-512(N | pad(g))
     let k = {
         let mut h = Sha512::new();
-        h.update(&n.to_bytes_be());
-        h.update(&pad_to_n(&g, &n));
+        h.update(n.to_bytes_be());
+        h.update(pad_to_n(&g, &n));
         BigUint::from_bytes_be(&h.finalize())
     };
 
@@ -187,14 +187,14 @@ async fn pair_setup_internal(
     // K = SHA-512(S)
     let session_key = {
         let mut h = Sha512::new();
-        h.update(&pad_to_n(&big_s, &n));
+        h.update(pad_to_n(&big_s, &n));
         h.finalize()
     };
 
     // M1 proof = SHA-512(SHA-512(N) XOR SHA-512(g) | SHA-512(username) | salt | A | B | K)
     let proof_m1 = {
-        let hash_n = Sha512::digest(&n.to_bytes_be());
-        let hash_g = Sha512::digest(&pad_to_n(&g, &n));
+        let hash_n = Sha512::digest(n.to_bytes_be());
+        let hash_g = Sha512::digest(pad_to_n(&g, &n));
         let hash_xor: Vec<u8> = hash_n
             .iter()
             .zip(hash_g.iter())
@@ -204,11 +204,11 @@ async fn pair_setup_internal(
 
         let mut h = Sha512::new();
         h.update(&hash_xor);
-        h.update(&hash_user);
+        h.update(hash_user);
         h.update(salt);
         h.update(&big_a_bytes);
-        h.update(&pad_to_n(&big_b, &n));
-        h.update(&session_key);
+        h.update(pad_to_n(&big_b, &n));
+        h.update(session_key);
         h.finalize().to_vec()
     };
 
@@ -234,7 +234,7 @@ async fn pair_setup_internal(
         let mut h = Sha512::new();
         h.update(&big_a_bytes);
         h.update(&proof_m1);
-        h.update(&session_key);
+        h.update(session_key);
         h.finalize()
     };
     if server_proof != expected_m2.as_slice() {
@@ -723,7 +723,7 @@ mod tests {
         // 3072-bit prime should be ~384 bytes (may include leading bytes)
         let n_bytes = n.to_bytes_be().len();
         assert!(
-            n_bytes >= 384 && n_bytes <= 386,
+            (384..=386).contains(&n_bytes),
             "N should be ~384 bytes, got {n_bytes}"
         );
     }

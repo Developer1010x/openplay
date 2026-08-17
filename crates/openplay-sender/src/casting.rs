@@ -33,6 +33,10 @@ impl CastStopHandle {
         self.stop_flag.store(true, Ordering::Relaxed);
     }
 
+    /// The read side of [`CastStopHandle::stop`]. The UI polls the shared flag
+    /// via [`CastStopHandle::flag`] instead, so this is only exercised by the
+    /// unit tests below.
+    #[allow(dead_code)]
     pub fn is_stopped(&self) -> bool {
         self.stop_flag.load(Ordering::Relaxed)
     }
@@ -291,7 +295,7 @@ async fn run_airplay_pipeline(
             break;
         }
         frame_count += 1;
-        if frame_count % 300 == 0 {
+        if frame_count.is_multiple_of(300) {
             info!(frame_count, "AirPlay streaming...");
         }
     }

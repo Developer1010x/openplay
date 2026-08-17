@@ -41,6 +41,5 @@ fn main() -> anyhow::Result<()> {
 
     openplay_common::ensure_dirs()?;
 
-    let exit_code = app::run(config);
-    std::process::exit(exit_code);
+    app::run(config)
 }
