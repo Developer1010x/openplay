@@ -3,20 +3,14 @@ name = "openplay-crypto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "TLS/DTLS certificate management and pairing for OpenPlay"
 
 [dependencies]
-openplay-common = { workspace = true }
-rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 sha2 = { workspace = true }
-x25519-dalek = { workspace = true }
-hmac = { workspace = true }
-hkdf = { workspace = true }
-rand = { workspace = true }
-base64 = { workspace = true }
-thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 

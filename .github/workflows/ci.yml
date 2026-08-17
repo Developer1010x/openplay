@@ -24,8 +24,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev \
-            libadwaita-1-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
@@ -40,10 +38,18 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # The protocol crates carry no GStreamer or PipeWire dependency, so they can be
-  # checked on macOS and Windows without installing any system packages. This is
-  # what catches Linux-only code leaking out of its #[cfg] gate (see #6); the
-  # ubuntu-only matrix above cannot.
+  # Every crate except openplay-pipeline, -sender and -receiver builds without
+  # GStreamer or PipeWire, so it can be checked on macOS and Windows with no
+  # system packages installed. This is what catches Linux-only code leaking out
+  # of its #[cfg] gate (see #6); the ubuntu-only matrix above cannot.
+  #
+  # openplay-capture is in this list deliberately: its Windows build was broken
+  # for the same class of reason (src/desktop.rs used the `windows` crate without
+  # declaring it) and the earlier five-crate version of this job did not cover it.
+  #
+  # Note these crates cannot be cross-checked from Linux with `--target`, because
+  # ring and rusqlite compile C that a Linux `cc` will not build for those hosts.
+  # Native runners are the only reliable signal.
   cross-platform-check:
     name: Cross-platform check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -63,6 +69,9 @@ jobs:
           -p openplay-common
           -p openplay-protocol
           -p openplay-crypto
+          -p openplay-capture
+          -p openplay-discovery
+          -p openplay-signaling
           -p openplay-airplay
           -p openplay-miracast
           -p openplay-capture
@@ -81,8 +90,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev \
-            libadwaita-1-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
@@ -106,8 +113,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev \
-            libadwaita-1-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \

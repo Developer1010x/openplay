@@ -3,12 +3,12 @@ name = "openplay-signaling"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "WebSocket signaling server and client for OpenPlay"
 
 [dependencies]
-openplay-common = { workspace = true }
 openplay-protocol = { workspace = true }
-openplay-crypto = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 rustls = { workspace = true }

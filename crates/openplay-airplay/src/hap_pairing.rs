@@ -442,6 +442,16 @@ async fn recv_response(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
         if let Some(header_end) = find_header_end(&buf[..total]) {
             // Parse Content-Length
             let header_str = String::from_utf8_lossy(&buf[..header_end]);
+
+            // Check the status line before touching the body. A receiver that
+            // refuses the request answers with a non-2xx status and, usually,
+            // an empty body — which would otherwise surface downstream as
+            // "Missing state TLV" and read like a crypto failure. Observed
+            // against macOS AirPlay Receiver, which answers 403 to every
+            // endpoint except /info when its access setting does not admit
+            // this device.
+            check_http_status(&header_str)?;
+
             let content_length = parse_content_length(&header_str).unwrap_or(0);
             let body_start = header_end + 4; // after \r\n\r\n
             let body_received = total - body_start;
@@ -468,6 +478,52 @@ async fn recv_response(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
             buf.resize(buf.len() * 2, 0);
         }
     }
+}
+
+/// Rejects a non-2xx HTTP response with a message naming the actual status.
+///
+/// Without this, an HTTP-level refusal reaches the TLV8 decoder as an empty
+/// body and is reported as a missing-TLV error, which reads like a protocol or
+/// crypto fault and sends the reader in entirely the wrong direction.
+///
+/// 403 in particular is an access-policy answer, not a pairing failure: macOS
+/// AirPlay Receiver returns it for every endpoint except `/info` when its
+/// "AirPlay Receiver" setting does not admit the calling device — for example
+/// when it is set to "Current User" and the caller is not signed into the same
+/// Apple ID. No pairing credential can satisfy that; the setting has to change.
+fn check_http_status(headers: &str) -> anyhow::Result<()> {
+    let status_line = headers
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Empty HTTP response"))?;
+
+    // "HTTP/1.1 403 Forbidden" → 403
+    let code: u16 = match status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+    {
+        Some(c) => c,
+        // Not a status line we recognise; let the body parser decide.
+        None => return Ok(()),
+    };
+
+    if (200..300).contains(&code) {
+        return Ok(());
+    }
+
+    let hint = match code {
+        403 => {
+            " — the receiver refused this device. On macOS, check System Settings → \
+                General → AirDrop & Handoff → AirPlay Receiver; \"Current User\" rejects \
+                devices not signed into the same Apple ID. This is not a pairing failure"
+        }
+        470 | 401 => " — the receiver requires a password or PIN",
+        500 => " — the receiver rejected the request body",
+        _ => "",
+    };
+
+    Err(anyhow::anyhow!("Receiver returned HTTP {code}{hint}"))
 }
 
 fn find_header_end(data: &[u8]) -> Option<usize> {
@@ -608,6 +664,41 @@ pub fn list_paired_devices(conn: &rusqlite::Connection) -> anyhow::Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_status_accepts_2xx() {
+        assert!(check_http_status("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n").is_ok());
+        assert!(check_http_status("HTTP/1.1 204 No Content\r\n").is_ok());
+    }
+
+    #[test]
+    fn http_status_rejects_403_with_an_actionable_message() {
+        // Observed against macOS AirPlay Receiver set to "Current User".
+        let err = check_http_status("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n")
+            .expect_err("403 must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("403"), "should name the status: {msg}");
+        assert!(
+            msg.contains("AirPlay Receiver"),
+            "should point at the setting that causes it: {msg}"
+        );
+        assert!(
+            !msg.contains("TLV"),
+            "must not read like a protocol/crypto fault: {msg}"
+        );
+    }
+
+    #[test]
+    fn http_status_rejects_other_failures() {
+        assert!(check_http_status("HTTP/1.1 500 Internal Server Error\r\n").is_err());
+        assert!(check_http_status("HTTP/1.1 470 Connection Authorization Required\r\n").is_err());
+    }
+
+    #[test]
+    fn http_status_defers_when_there_is_no_status_line() {
+        // Not our job to reject something we cannot parse — let the body parser try.
+        assert!(check_http_status("garbage without a code\r\n").is_ok());
+    }
 
     #[test]
     fn test_hkdf_derive() {

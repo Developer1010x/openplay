@@ -3,6 +3,8 @@ name = "openplay-sender"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "OpenPlay sender — cast your screen to AirPlay, Miracast, or OpenPlay receivers"
 
 [[bin]]
@@ -11,12 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 openplay-common = { workspace = true }
-openplay-protocol = { workspace = true }
-openplay-crypto = { workspace = true }
 openplay-discovery = { workspace = true }
 openplay-capture = { workspace = true }
 openplay-pipeline = { workspace = true }
-openplay-signaling = { workspace = true }
 openplay-airplay = { workspace = true }
 openplay-miracast = { workspace = true }
 egui = { workspace = true }

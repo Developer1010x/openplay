@@ -50,7 +50,6 @@ rustls-pemfile = "2"
 rcgen = { version = "0.13", features = ["pem"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-hmac = "0.12"
 sha2 = "0.10"
 hkdf = "0.12"
 chacha20poly1305 = "0.10"
@@ -58,10 +57,8 @@ aes = "0.8"
 ctr = "0.9"
 cipher = "0.4"
 num-bigint = { version = "0.4", features = ["rand"] }
-num-integer = "0.1"
 num-traits = "0.2"
 rand = "0.8"
-base64 = "0.22"
 
 # Discovery
 mdns-sd = "0.11"
@@ -72,6 +69,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # GStreamer
 gstreamer = "0.23"
 gstreamer-app = "0.23"
+# Reserved for the OpenPlay/WebRTC path, which is implemented as libraries but
+# not yet called by either binary. No crate references these today.
 gstreamer-video = "0.23"
 gstreamer-webrtc = "0.23"
 gstreamer-sdp = "0.23"

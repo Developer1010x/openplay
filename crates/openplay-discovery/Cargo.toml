@@ -3,13 +3,13 @@ name = "openplay-discovery"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "mDNS service registration and browsing for OpenPlay"
 
 [dependencies]
-openplay-common = { workspace = true }
 mdns-sd = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 tracing = { workspace = true }
 hostname = "0.4"
