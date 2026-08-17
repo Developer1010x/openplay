@@ -6,6 +6,7 @@ pub mod mirror_header;
 pub mod mirror_stream;
 pub mod ntp;
 pub mod session;
+pub mod srp;
 pub mod tlv8;
 
 use thiserror::Error;

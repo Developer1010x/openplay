@@ -30,6 +30,11 @@
 //! GPL, so license-compatible — but the key material itself is Apple's, which
 //! deserves a deliberate decision rather than an accident. Tracked in issue #8.
 //!
+//! Note this is now the *only* remaining blocker on the AirPlay path: the HAP
+//! pairing SRP group was fabricated too, but has been replaced with the real
+//! RFC 5054 group (see [`crate::srp`]). Receivers that do not demand FairPlay
+//! are no longer blocked by a known-wrong constant.
+//!
 //! Key material is based on the open-source AirPlay protocol documentation
 //! from projects like RPiPlay, shairplay, and UxPlay.
 

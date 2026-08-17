@@ -26,10 +26,12 @@ sections below describe the design, some of which is not yet connected.
 
 **Partly built**
 
-- **AirPlay sending** — discovery, the HTTP/plist session layer, TLV8, NTP and
-  the mirror stream are implemented, but HAP pairing and FairPlay use
-  placeholder crypto constants, so real receivers reject the handshake
-  ([#8](https://github.com/Developer1010x/openplay/issues/8)).
+- **AirPlay sending** — discovery, the HTTP/plist session layer, TLV8, NTP, the
+  mirror stream and HAP pairing are implemented. Pairing previously used a
+  fabricated SRP group and could never succeed; it now uses the real RFC 5054
+  3072-bit group, but has not been confirmed against physical hardware.
+  FairPlay key derivation is still a placeholder, so receivers that require it
+  are rejected ([#8](https://github.com/Developer1010x/openplay/issues/8)).
 - **OpenPlay (WebRTC)** — the library pieces exist and are tested
   (`SenderPipeline`, `ReceiverPipeline`, `SignalingServer`, `SignalingClient`,
   `ReceiverAdvertiser`), but neither binary calls them yet. The sender's
@@ -47,7 +49,7 @@ sections below describe the design, some of which is not yet connected.
 
 | Protocol | Direction | Notes |
 |---|---|---|
-| AirPlay | Sender only, **not yet interoperable** | Discovery, HTTP/plist session layer, TLV8, NTP and the mirror stream are implemented, but HAP pairing and FairPlay currently use placeholder crypto constants and are rejected by real receivers. Target: Apple TV, AirPlay 2 TVs, and compatible displays. See [#8](https://github.com/Developer1010x/openplay/issues/8) |
+| AirPlay | Sender only, **untested against hardware** | Discovery, HTTP/plist session layer, TLV8, NTP, the mirror stream and HAP pairing are implemented. FairPlay still uses a placeholder key derivation, so receivers that require it (Apple TV 3rd gen and similar) are rejected. Target: Apple TV, AirPlay 2 TVs, and compatible displays. See [#8](https://github.com/Developer1010x/openplay/issues/8) |
 | Miracast / Wi-Fi Display | Sender only | Cast to Miracast adapters and smart TVs; Wi-Fi Direct P2P supported on Linux |
 | OpenPlay (WebRTC) | Sender and receiver, **not yet wired up** | Native protocol between two OpenPlay instances. The signaling, pipeline and discovery libraries are implemented; connecting them to the two binaries is in progress. See [#11](https://github.com/Developer1010x/openplay/issues/11) |
 
