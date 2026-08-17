@@ -1,3 +1,12 @@
+//! Self-signed certificate lifecycle for securing OpenPlay connections.
+//!
+//! [`CertificateManager`] generates, persists, loads
+//! and fingerprints a self-signed ECDSA P-256 certificate and key.
+//!
+//! **Nothing constructs this outside its own tests yet.** It is the identity the
+//! WebRTC signaling path is designed to use, and that path is not yet connected.
+//! See `docs/crypto.md`.
+
 mod certs;
 
 pub use certs::CertificateManager;

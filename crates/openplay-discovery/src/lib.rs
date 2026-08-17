@@ -1,3 +1,16 @@
+//! mDNS service advertisement and browsing.
+//!
+//! Advertises OpenPlay receivers and browses for all three supported receiver
+//! kinds:
+//!
+//! - `_openplay._tcp.local.` — other OpenPlay instances
+//! - `_airplay._tcp.local.` — AirPlay receivers
+//! - `_display._tcp.local.`, `_miracast._tcp.local.`, `_wfd._tcp.local.` —
+//!   Miracast sinks, which disagree about which type to advertise
+//!
+//! On Linux, Miracast peers can additionally be found over Wi-Fi Direct; that
+//! lives in `openplay-miracast`, not here.
+
 mod advertiser;
 pub mod airplay_browser;
 pub mod airplay_record;

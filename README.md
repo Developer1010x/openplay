@@ -9,7 +9,7 @@ OpenPlay ships two binaries:
 - **openplay-sender** — captures your screen and streams it to a receiver of your choice.
 - **openplay-receiver** — receives and displays incoming streams on a connected display.
 
-Both are standalone GUI applications that discover each other automatically over your local network using mDNS, so there is nothing to manually configure.
+The sender finds receivers on the local network over mDNS, so there are no IP addresses to type. The OpenPlay receiver does not yet advertise itself or run a signaling server, so two OpenPlay instances cannot connect to each other yet — see Status.
 
 ## Status
 
@@ -18,7 +18,8 @@ sections below describe the design, some of which is not yet connected.
 
 **Works today**
 
-- mDNS discovery of AirPlay, Miracast and OpenPlay receivers
+- mDNS discovery of AirPlay and Miracast receivers (the sender also browses for
+  OpenPlay receivers, but nothing advertises that service yet)
 - Screen capture on Linux via XDG Desktop Portal and PipeWire
 - Hardware encoder probing with x264 fallback
 - Miracast sending, including Wi-Fi Direct P2P on Linux
@@ -29,14 +30,16 @@ sections below describe the design, some of which is not yet connected.
 - **AirPlay sending** — discovery, the HTTP/plist session layer, TLV8, NTP, the
   mirror stream and HAP pairing are implemented. Pairing previously used a
   fabricated SRP group and could never succeed; it now uses the real RFC 5054
-  3072-bit group, but has not been confirmed against physical hardware.
-  FairPlay key derivation is still a placeholder, so receivers that require it
-  are rejected ([#8](https://github.com/Developer1010x/openplay/issues/8)).
-- **OpenPlay (WebRTC)** — the library pieces exist and are tested
-  (`SenderPipeline`, `ReceiverPipeline`, `SignalingServer`, `SignalingClient`,
-  `ReceiverAdvertiser`), but neither binary calls them yet. The sender's
-  OpenPlay path sets a status string and stops; the receiver window is a static
-  "waiting" page ([#11](https://github.com/Developer1010x/openplay/issues/11)).
+  3072-bit group, but is unconfirmed against physical hardware. FairPlay is not
+  part of the session flow at all — `fairplay.rs` has no callers, and receivers
+  identified as Apple TV 2nd/3rd generation are refused up front with an
+  explicit error ([#8](https://github.com/Developer1010x/openplay/issues/8)).
+- **OpenPlay (WebRTC)** — the library pieces exist (`SenderPipeline`,
+  `ReceiverPipeline`, `SignalingServer`, `SignalingClient`,
+  `ReceiverAdvertiser`) but have no test coverage, and neither binary calls
+  them. The sender's OpenPlay path sets a status string and stops; the receiver
+  window is a static "waiting" page
+  ([#11](https://github.com/Developer1010x/openplay/issues/11)).
 
 **Planned**
 
@@ -65,7 +68,7 @@ AirPlay receiver support and Miracast receiver support are planned for a future 
   - All platforms: x264 software fallback
 - Screen capture via XDG Desktop Portal and PipeWire on Linux
 - Configurable bitrate and framerate
-- Self-signed TLS certificate lifecycle for securing WebRTC connections (implemented in `openplay-crypto`; not yet generated on first launch — see Status)
+- Self-signed certificate lifecycle for securing WebRTC connections (implemented in `openplay-crypto`; nothing constructs it yet, so no certificate is generated on first launch — see Status)
 - Lightweight egui GUI — no Electron, no browser runtime
 
 ## Building from source
@@ -88,8 +91,12 @@ sudo apt install \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad \
   gstreamer1.0-libav \
+  gstreamer1.0-pipewire \
   libpipewire-0.3-dev
 ```
+
+`gstreamer1.0-pipewire` provides the `pipewiresrc` element that Linux capture
+feeds into; `libpipewire-0.3-dev` alone is not enough at runtime.
 
 **Fedora:**
 
@@ -132,18 +139,18 @@ The compiled binaries will be at `target/release/openplay-sender` and `target/re
 ./openplay-receiver
 ```
 
-The sender will scan for receivers on your network automatically. Select a receiver from the list, choose a protocol, and click Cast.
+The sender scans for receivers automatically. Select one from the list — its protocol badge (AirPlay, Miracast or OpenPlay) determines how it is cast to, there is no separate protocol chooser — then click **▶ Start Casting**.
 
 ### Command-line options
 
 ```
 openplay-sender
   --config <path>   Use a custom config file
-  --name <name>     Override the display name advertised on the network
+  --name <name>     Override the display name shown in the window
 
 openplay-receiver
   --config <path>   Use a custom config file
-  --name <name>     Override the display name advertised on the network
+  --name <name>     Override the display name (not yet advertised over mDNS)
   --port <port>     Override the signaling port (default: 7290)
 ```
 
@@ -152,8 +159,8 @@ openplay-receiver
 On first launch, a config file is created at:
 
 - Linux: `$XDG_CONFIG_HOME/openplay/config.toml` (usually `~/.config/openplay/config.toml`)
-- macOS: `~/Library/Application Support/openplay/config.toml`
-- Windows: `%APPDATA%\openplay\config.toml`
+- macOS: `~/Library/Application Support/org.openplay.OpenPlay/config.toml`
+- Windows: `%APPDATA%\openplay\OpenPlay\config\config.toml`
 
 Example `config.toml`:
 
@@ -189,9 +196,15 @@ openplay/
     openplay-capture/     Screen capture abstraction (XDG Portal / PipeWire on Linux)
     openplay-crypto/      Self-signed TLS certificate lifecycle
     openplay-common/      Configuration, logging, XDG paths, shared constants
-  data/                   Desktop entry, AppStream metainfo, icons, D-Bus and polkit files
+  data/                   Desktop entry, AppStream metainfo, icon, D-Bus and polkit files
   flatpak/                Flatpak manifest
+  docs/                   Install, configuration, architecture, protocols, crypto,
+                          packaging, troubleshooting, contributing
+  .github/workflows/      CI
 ```
+
+Each crate also carries its own `README.md`. Full documentation is in
+[docs/](docs/README.md).
 
 ## Contributing
 

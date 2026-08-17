@@ -1,6 +1,13 @@
 # openplay-signaling
 
-WebSocket-based signaling channel for OpenPlay's native WebRTC protocol. Provides a TLS-secured client (sender side) and server (receiver side) that exchange `SignalingMessage` values.
+WebSocket-based signaling channel for OpenPlay's native WebRTC protocol. Provides a
+TLS-secured client (sender side) and server (receiver side) that exchange
+`SignalingMessage` values.
+
+> **Status: never constructed, and untested.** Neither binary calls
+> `SignalingClient` or `SignalingServer`, and this crate has no tests. Both take
+> their rustls configuration from the caller, and there is no caller. See the
+> [Status section of the root README](../../README.md).
 
 ## What it contains
 

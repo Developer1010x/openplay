@@ -1,3 +1,19 @@
+//! Miracast / Wi-Fi Display sender protocol.
+//!
+//! Two transports:
+//!
+//! - **MICE** (Miracast over Infrastructure) — both devices already share a
+//!   network. Available on every platform.
+//! - **Wi-Fi Direct P2P** — Linux only, driving wpa_supplicant over D-Bus. See
+//!   [`wifi_direct`]; the code paths in [`session`] are gated to match.
+//!
+//! Either way, WFD negotiation is RTSP M1 through M7 ([`rtsp_server`]) with
+//! video parameters from [`wfd_params`], after which H.264 is streamed as
+//! MPEG2-TS over RTP/UDP.
+//!
+//! Note the role inversion: once connected, the **source is the RTSP server**,
+//! listening for the sink to connect to it.
+
 pub mod rtsp_server;
 pub mod session;
 pub mod wfd_params;

@@ -1,3 +1,20 @@
+//! AirPlay sender protocol.
+//!
+//! Covers the HTTP/plist session layer, feature negotiation, TLV8, NTP timing,
+//! the mirror stream, HAP pairing (SRP-6a over the RFC 5054 3072-bit group with
+//! SHA-512, then Ed25519/X25519 and ChaCha20-Poly1305), and FairPlay.
+//!
+//! # Interoperability status
+//!
+//! Read `docs/crypto.md` before debugging a receiver that rejects a connection.
+//!
+//! - **HAP pairing** used a fabricated SRP group and could never succeed. That
+//!   is fixed — see [`srp`] — but is **not confirmed against physical Apple
+//!   hardware**.
+//! - **FairPlay** still derives its AES key from an invented seed and cannot
+//!   interoperate. Receivers that require it, such as Apple TV 3rd gen, will
+//!   reject the handshake. See [`fairplay`].
+
 pub mod fairplay;
 pub mod features;
 pub mod hap_pairing;

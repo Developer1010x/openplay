@@ -1,3 +1,13 @@
+//! WebSocket signaling transport for the OpenPlay protocol.
+//!
+//! [`SignalingServer`] is hosted by the receiver;
+//! [`SignalingClient`] is used by the sender. Both
+//! carry [`SignalingMessage`](openplay_protocol::SignalingMessage)
+//! values over TLS, taking their rustls configuration from the caller.
+//!
+//! **Neither is constructed by either binary yet** — see the README Status
+//! section and `docs/protocols.md`.
+
 mod client;
 mod server;
 

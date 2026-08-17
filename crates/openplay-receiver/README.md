@@ -1,6 +1,13 @@
 # openplay-receiver
 
-The receiver binary. Advertises itself on the local network, accepts incoming screen cast connections from OpenPlay senders, and displays the video stream in a window.
+The receiver binary.
+
+> **Status: not wired up.** Today this starts an egui window showing a static
+> "Waiting for a sender to connect…" page and nothing else. mDNS advertisement,
+> the signaling server and the receive pipeline are all unimplemented in this
+> binary, and it declares only `openplay-common` as a dependency. The sections
+> below describe the intended design. See the [Status section of the root
+> README](../../README.md) and [docs/protocols.md](../../docs/protocols.md).
 
 ## Running
 
@@ -10,7 +17,7 @@ cargo run -p openplay-receiver
 ./target/release/openplay-receiver
 
 # Options:
-openplay-receiver --name "Living Room TV"   # override advertised display name
+openplay-receiver --name "Living Room TV"   # display name (not yet advertised)
 openplay-receiver --port 9000               # override signaling port
 openplay-receiver --config /path/to/config.toml
 ```
@@ -19,19 +26,35 @@ openplay-receiver --config /path/to/config.toml
 
 **`main.rs`** — parses CLI arguments, loads `AppConfig`, applies overrides for name and port, and calls `app::run(config)`.
 
-**`app.rs`** — the main application loop. Starts:
-1. `ReceiverAdvertiser` — publishes the device on mDNS so senders can find it.
-2. `SignalingServer` — listens on the configured port for incoming WebSocket connections from senders.
-3. The egui window via `eframe::run_native`.
+**`app.rs`** — builds the eframe native options and runs the egui window. That is
+all it does today.
 
-When a sender connects, `app.rs` drives the `ReceiverStateMachine` through pairing/authentication and then hands off to the WebRTC pipeline.
+*Intended:* start `ReceiverAdvertiser` (mDNS) and `SignalingServer`, then drive the
+`ReceiverStateMachine` through pairing/authentication and hand off to the WebRTC
+pipeline.
 
-**`window.rs`** — the egui window. Renders the incoming video as a texture updated from the `ReceiverPipeline`'s appsink. Also shows the device name, current connection status, and sender identity.
+**`window.rs`** — the egui window. Currently a static waiting page with a `TODO`
+where the video widget belongs.
 
-## WebRTC path
+*Intended:* render incoming video as a texture updated from the
+`ReceiverPipeline`'s appsink, alongside device name, connection status and sender
+identity.
 
-The receiver uses `openplay-signaling` (`SignalingServer`) for ICE/SDP exchange and `openplay-pipeline` (`ReceiverPipeline`) for decoding. The pipeline outputs RGBA frames to an appsink; `window.rs` uploads each frame to an egui texture for display.
+## WebRTC path (designed, not connected)
+
+The design is for the receiver to use `openplay-signaling` (`SignalingServer`) for
+ICE/SDP exchange and `openplay-pipeline` (`ReceiverPipeline`) for decoding, with
+the pipeline emitting RGBA frames to an appsink that `window.rs` uploads to an
+egui texture.
+
+Both types exist and are unreferenced here. This crate previously declared
+dependencies on `openplay-pipeline`, `-signaling`, `-protocol`, `-crypto`,
+`-discovery`, `gstreamer`, `gstreamer-app` and `tokio` without importing any of
+them; those declarations have been removed, so wiring this up starts by re-adding
+the ones you need.
 
 ## Planned
 
-AirPlay receiver mode and Miracast receiver mode are not yet implemented. The stubs live in `receiver/airplay/` and `receiver/miracast/` in the planned repository layout.
+AirPlay receiver mode and Miracast receiver mode are not implemented, and no
+receiver-side stubs exist in the tree. For AirPlay specifically there is a design
+document: [docs/airplay-receiver-design.md](../../docs/airplay-receiver-design.md).
