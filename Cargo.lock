@@ -3211,6 +3211,7 @@ dependencies = [
  "openplay-common",
  "thiserror 2.0.18",
  "tracing",
+ "windows 0.58.0",
 ]
 
 [[package]]
