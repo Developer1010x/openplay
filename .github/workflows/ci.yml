@@ -65,6 +65,7 @@ jobs:
           -p openplay-crypto
           -p openplay-airplay
           -p openplay-miracast
+          -p openplay-capture
 
   test:
     name: Test (${{ matrix.os }})
