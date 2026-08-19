@@ -1,6 +1,12 @@
 # openplay-protocol
 
-Defines the wire format and state machines for the OpenPlay WebRTC signaling protocol. Used by both `openplay-sender` (via `openplay-signaling`) and `openplay-receiver`.
+Defines the wire format and state machines for the OpenPlay WebRTC signaling
+protocol.
+
+> **Status: no consumers yet.** This crate is implemented and well tested, but the
+> WebRTC path it describes is not wired to either binary, so nothing outside this
+> crate's tests uses it. See the [Status section of the root
+> README](../../README.md).
 
 ## What it contains
 

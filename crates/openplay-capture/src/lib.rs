@@ -1,3 +1,15 @@
+//! Screen capture abstraction.
+//!
+//! On Linux, [`CaptureSession`] requests a PipeWire
+//! screencast through the XDG Desktop Portal using `ashpd`, and exposes a file
+//! descriptor and node ID for GStreamer's `pipewiresrc` to consume. The portal
+//! raises the desktop's own permission dialog, so the first capture always
+//! requires user consent.
+//!
+//! **On macOS and Windows this crate compiles as a stub.** There is no capture
+//! backend on those platforms, so the applications build and start but cannot
+//! capture a screen.
+
 /// Platform-specific capture implementations.
 #[cfg(target_os = "linux")]
 mod portal;

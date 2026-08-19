@@ -3,6 +3,8 @@ name = "openplay-airplay"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "AirPlay mirroring protocol implementation for OpenPlay"
 
 [dependencies]
@@ -23,7 +25,6 @@ hkdf = { workspace = true }
 sha2 = { workspace = true }
 chacha20poly1305 = { workspace = true }
 num-bigint = { workspace = true }
-num-integer = { workspace = true }
 num-traits = { workspace = true }
 
 # FairPlay (Phase 4)
@@ -36,3 +37,6 @@ rusqlite = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+# For the pair_probe example, which talks to real hardware.
+anyhow = { workspace = true }
+tracing-subscriber = { workspace = true }

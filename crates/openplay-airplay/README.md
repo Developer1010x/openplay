@@ -1,6 +1,14 @@
 # openplay-airplay
 
-AirPlay mirroring protocol implementation. Handles the full sender-side flow from device discovery through stream setup to per-frame video delivery.
+AirPlay mirroring protocol implementation. Handles the sender-side flow from
+device discovery through stream setup to per-frame video delivery.
+
+> **Interoperability status.** HAP pairing used a fabricated SRP group and could
+> never succeed; that is fixed (see `srp.rs`) but is **unconfirmed against physical
+> Apple hardware**. `fairplay.rs` uses an invented key derivation and **has no
+> callers** — Apple TV 2nd/3rd generation are refused by model string instead.
+> Read [docs/crypto.md](../../docs/crypto.md) before debugging a receiver that
+> rejects a connection.
 
 ## Protocol phases
 

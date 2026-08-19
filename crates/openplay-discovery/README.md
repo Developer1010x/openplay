@@ -6,7 +6,7 @@ mDNS service advertisement and browsing for all three protocols supported by Ope
 
 ### OpenPlay receivers
 
-**`ReceiverAdvertiser`** — registers an `_openplay._tcp.local.` mDNS service. The receiver calls this at startup to make itself visible on the network.
+**`ReceiverAdvertiser`** — registers an `_openplay._tcp.local.` mDNS service. **Nothing constructs this yet** — the receiver binary does not call it, so no OpenPlay instance is currently discoverable. The sender does browse for the service.
 
 **`ReceiverBrowser`** — browses for `_openplay._tcp.local.` services and sends `DiscoveryEvent::ReceiverFound` / `ReceiverLost` over a channel.
 

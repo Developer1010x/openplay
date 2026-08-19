@@ -14,7 +14,7 @@
 //!
 //! The message framing above is right, but the key derivation is invented: the
 //! AES-128 key is computed as `SHA-512(server_data || FAIRPLAY_SEED)` with an
-//! ASCII string as the seed (see [`FAIRPLAY_SEED`]). Real FairPlay uses Apple's
+//! ASCII string as the seed (see `FAIRPLAY_SEED` in this file). Real FairPlay uses Apple's
 //! fixed key tables and a specific challenge-response transform, neither of
 //! which is present here. A receiver that requires FairPlay will reject the
 //! type=3 response; the failure looks like an unexplained connection reset, so

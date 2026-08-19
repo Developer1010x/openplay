@@ -1,3 +1,12 @@
+//! Shared foundations for every OpenPlay crate.
+//!
+//! Holds [`AppConfig`] (the `config.toml` model, with validation and first-run
+//! creation), XDG-style config and data paths, `tracing` initialisation, and the
+//! constants shared across crates such as the mDNS service types and the default
+//! signaling port.
+//!
+//! See `docs/configuration.md` for the user-facing description of every key.
+
 mod config;
 mod error;
 mod logging;

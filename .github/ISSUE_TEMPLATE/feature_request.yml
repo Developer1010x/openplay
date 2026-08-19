@@ -1,0 +1,34 @@
+name: Feature or improvement
+description: Propose something OpenPlay should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything large, please describe the approach here before writing
+        code — it is easier to agree a direction than to redo a branch.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: |
+        Optional. If it touches protocol behaviour, say which specification or
+        reference implementation you are working from.
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Checks
+      options:
+        - label: I checked the README Status section — this is not an already-known gap
+          required: true
+        - label: I am willing to work on this myself

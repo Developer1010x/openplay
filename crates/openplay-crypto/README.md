@@ -1,6 +1,12 @@
 # openplay-crypto
 
-TLS certificate lifecycle management for the OpenPlay WebRTC connection. Generates a self-signed ECDSA P-256 certificate on first launch and reuses it on subsequent runs so each device maintains a stable identity.
+Self-signed ECDSA P-256 certificate lifecycle for the OpenPlay WebRTC connection:
+generate, persist, load and fingerprint.
+
+> **Status: never constructed.** `CertificateManager` has no callers outside this
+> crate's own tests, so no certificate is generated on first launch or at any
+> other time. The WebRTC path that would consume it is unwired. See
+> [docs/crypto.md](../../docs/crypto.md#tls-certificates).
 
 ## What it contains
 
@@ -15,7 +21,13 @@ TLS certificate lifecycle management for the OpenPlay WebRTC connection. Generat
 
 ## Why a dedicated crate
 
-The certificate is shared between the signaling server (receiver), the signaling client (sender), and the WebRTC DTLS layer. Isolating it avoids circular dependencies between `openplay-signaling` and `openplay-receiver`.
+The certificate is *intended* to be shared between the signaling server
+(receiver), the signaling client (sender), and the WebRTC DTLS layer. Isolating it
+avoids circular dependencies between `openplay-signaling` and `openplay-receiver`.
+
+Note this crate does not depend on `rustls` — it only produces the certificate and
+key; whoever wires up signaling is responsible for building the rustls config from
+them.
 
 ## Tests
 

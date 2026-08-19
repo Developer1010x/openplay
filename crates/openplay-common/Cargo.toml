@@ -3,6 +3,8 @@ name = "openplay-common"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "Shared types, config, logging, and XDG path helpers for OpenPlay"
 
 [dependencies]
@@ -13,7 +15,6 @@ tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-uuid = { workspace = true }
 gethostname = "0.5"
 
 [dev-dependencies]
