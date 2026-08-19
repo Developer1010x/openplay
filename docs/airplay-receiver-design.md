@@ -15,16 +15,20 @@ issue `POST /fp-setup` before they will stream, and they expect a response
 derived from Apple's fixed key tables. There is no negotiation path that skips
 it and no fallback a receiver can offer.
 
-This is the same blocker as issue #8, arriving from the other side. On the
+This is the same blocker as the FairPlay decision, arriving from the other side. On the
 sender side it only affects receivers that demand FairPlay, so some casting
 works without it. On the receiver side it affects **every** Apple sender, so
 nothing works without it.
 
 Concretely: items 1–5 below can all be built and tested, and the result will
-still refuse every real iPhone until the FairPlay decision is made.
+still refuse every real iPhone.
 
-That decision — whether to port Apple's key material from the GPL projects that
-carry it — is recorded as unmade in [crypto.md](crypto.md#fairplay--not-fixed).
+That is not a gap waiting to be filled. The decision — whether to port Apple's
+key material from the GPL projects that carry it — has been made, and the answer
+is no; see [crypto.md](crypto.md#fairplay--not-fixed). So this whole design is
+documented for its protocol value, not as a roadmap: **a useful AirPlay receiver
+for Apple senders cannot be built on it**, and anyone starting the work should
+know that before writing the first line rather than after item 5.
 
 ## Evidence from a real receiver
 
@@ -117,10 +121,11 @@ media streams.
 
 `fairplay.rs` has the message framing, which is direction-agnostic. It does not
 have the key tables or the challenge-response transform, and cannot until the
-decision in [crypto.md](crypto.md#fairplay--not-fixed) is made.
+decision in [crypto.md](crypto.md#fairplay--not-fixed) stands.
 
 **Do not attempt this by inventing constants.** That is precisely how the
-current placeholder came to exist and how issue #8 was filed.
+current placeholder came to exist and how issue #8 was filed. The same reasoning
+that rules out shipping Apple's key tables on the sender side rules it out here.
 
 ### 5. Media receive and render — large
 

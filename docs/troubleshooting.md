@@ -134,7 +134,7 @@ the device and OpenPlay does not, that is a bug worth reporting.
 Pairing previously could never succeed — the SRP group was fabricated. That is
 fixed, but **has not been confirmed against physical hardware**. If you hit a
 pairing failure, `RUST_LOG=openplay_airplay=debug` will show which message it
-died on, and that result is worth adding to issue #8 either way.
+died on, and that result is worth adding to issue #27 either way.
 
 ### "requires FairPlay authentication which is not supported"
 
