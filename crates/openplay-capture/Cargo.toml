@@ -14,3 +14,7 @@ tracing = { workspace = true }
 # XDG Desktop Portal (PipeWire-backed screen capture) — Linux only
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { workspace = true }
+
+# Win32 display metrics (GetSystemMetrics) — Windows only
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true }
