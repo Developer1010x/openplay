@@ -5,7 +5,7 @@ looked complete, were well commented, and could never have worked. Anyone
 debugging an AirPlay receiver that "just rejects the connection" should read
 this before reaching for tcpdump.
 
-Original report: issue #8.
+Original report: issue #8 (closed). Hardware confirmation is tracked in issue #27.
 
 ## Summary
 
@@ -13,7 +13,7 @@ Original report: issue #8.
 |---|---|---|
 | HAP pair-setup (SRP-6a) | `airplay/srp.rs`, `hap_pairing.rs` | **Fixed**, untested against hardware |
 | HAP pair-verify | `airplay/hap_pairing.rs` | Implemented, unreachable until pairing is confirmed |
-| FairPlay | `airplay/fairplay.rs` | **Not fixed**, and not wired in — `fp_setup` has no callers |
+| FairPlay | `airplay/fairplay.rs` | **Will not be implemented** (decision below), and not wired in — `fp_setup` has no callers |
 | TLS certificates | `openplay-crypto/certs.rs` | Implemented, never constructed anywhere |
 
 ## HAP pair-setup — fixed
@@ -123,7 +123,7 @@ the misleading-diagnostic problem this issue was filed about, one layer up. It
 now reports the status and names the setting to change (`check_http_status` in
 `hap_pairing.rs`, with four tests).
 
-If you get further against real hardware, please add the result to issue #8
+If you get further against real hardware, please add the result to issue #27
 either way.
 
 ## FairPlay — not fixed
@@ -149,25 +149,46 @@ actually put on the wire.
 
 `fp_setup` does log a warning on entry (`fairplay.rs:94`) saying it cannot
 interoperate — but since nothing calls it, that warning never fires. Treat the
-module as documented dead code awaiting the decision below.
+module as documented dead code; the decision below is why it stays that way.
 
-### What fixing it would involve
+### Decision: FairPlay will not be implemented here
 
-Two separate things, which is why it is harder than the SRP fix was:
+**This is settled, not pending.** Issue #8 raised porting the real key material
+as future work; the answer is no, and this section is the record of that so the
+question does not get reopened as an oversight.
+
+What a port would require is two separate things, which is why it was never
+comparable to the SRP fix:
 
 1. The key tables
 2. The challenge-response transform
 
-RPiPlay and UxPlay both implement this and are GPL, so license-compatible with
-this project. **The key material itself is Apple's**, and shipping it is a
-deliberate decision for the maintainer rather than something that should arrive
-as a side effect of a lint or docs change. That decision is what issue #8 now
-tracks.
+RPiPlay and UxPlay both implement this and are GPL, so their *code* is
+license-compatible with this project. But the thing that would actually have to
+be copied is not really code — it is Apple's fixed key tables, and the transform
+exists to enforce FairPlay DRM. Vendoring it here is DRM circumvention
+regardless of which repository it is copied from, and GPL compatibility does not
+change that.
 
-Note the asymmetry with SRP: that was one published IETF constant, derivable
-from a formula and verifiable from first principles. This is proprietary key
-material that cannot be derived, only copied, and cannot be verified without
-hardware.
+Note the asymmetry with SRP, which is why one was fixed and the other will not
+be. SRP was a single published IETF constant: derivable from a formula, and
+verifiable from first principles by anyone, which is exactly what
+`srp.rs`'s property tests now do. FairPlay is proprietary key material that
+cannot be derived, only copied, and cannot be verified without hardware. A fix
+we could not verify would be indistinguishable from the bug we just removed.
+
+**Consequences, stated plainly:**
+
+- Apple TV 2nd and 3rd generation will not be supported. They are refused up
+  front by model string, which is the honest failure.
+- Receivers that do not demand FairPlay — modern Apple TVs, AirPlay 2 TVs — are
+  unaffected. They were never blocked by this.
+- `fairplay.rs` stays in the tree as documented dead code rather than being
+  deleted, because the `POST /fp-setup` framing is correct and useful as
+  protocol documentation. It has no callers and must not acquire any.
+
+Anyone who disagrees is free to fork — that is what the GPL is for. It will not
+land in this repository.
 
 ### Do not "fix" this by guessing
 

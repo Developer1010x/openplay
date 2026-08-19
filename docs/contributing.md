@@ -131,13 +131,18 @@ implementation, do not invent one. Leave it unimplemented with a warning.
 
 ## Areas where help is useful
 
-- FairPlay key derivation — see [crypto.md](crypto.md#fairplay--not-fixed)
 - Wiring the OpenPlay/WebRTC path to the two binaries. The receiver is currently
   a window with a single dependency, so this is close to greenfield
 - Receiving AirPlay on Linux — see
   [airplay-receiver-design.md](airplay-receiver-design.md)
 - macOS and Windows screen capture backends
 - AirPlay and Miracast receiver support
+- Confirming AirPlay HAP pairing against real hardware — one `pair_probe` run,
+  see [#27](https://github.com/Developer1010x/openplay/issues/27)
+
+**Not** useful: porting Apple's FairPlay key tables. That was considered and
+declined — see [crypto.md](crypto.md#fairplay--not-fixed). A PR adding them will
+be closed, so please do not spend time on it.
 - Testing against real AirPlay and Miracast hardware — genuinely valuable, since
   no test in this repo can substitute
 - Packaging (Flatpak, Homebrew, Winget, AUR)
