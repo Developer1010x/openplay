@@ -43,9 +43,10 @@ jobs:
   # system packages installed. This is what catches Linux-only code leaking out
   # of its #[cfg] gate (see #6); the ubuntu-only matrix above cannot.
   #
-  # openplay-capture is in this list deliberately: its Windows build was broken
-  # for the same class of reason (src/desktop.rs used the `windows` crate without
-  # declaring it) and the earlier five-crate version of this job did not cover it.
+  # openplay-capture was added in #25, after its Windows build turned out to be
+  # broken for the same class of reason (src/desktop.rs used the `windows` crate
+  # without declaring it) and the five-crate version of this job did not cover it.
+  # -discovery and -signaling are added here for the same reason: no coverage.
   #
   # Note these crates cannot be cross-checked from Linux with `--target`, because
   # ring and rusqlite compile C that a Linux `cc` will not build for those hosts.
@@ -69,7 +70,6 @@ jobs:
           -p openplay-common
           -p openplay-protocol
           -p openplay-crypto
-          -p openplay-capture
           -p openplay-discovery
           -p openplay-signaling
           -p openplay-airplay

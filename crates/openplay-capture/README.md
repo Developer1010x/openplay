@@ -6,7 +6,7 @@ Platform abstraction for screen capture. Exposes a single `CaptureSession` type 
 
 **Linux** (`portal.rs`) — uses the XDG Desktop Portal via `ashpd`. Opens a `org.freedesktop.portal.ScreenCast` session, prompts the user to select a screen or window, and returns a PipeWire file descriptor and node ID. GStreamer's `pipewiresrc` element consumes these directly.
 
-**Windows / macOS** (`desktop.rs`) — reports the primary display size only; capture itself is left to GStreamer's `d3d11screencapturesrc` (Windows) or `screencapturesrc`/`avfvideosrc` (macOS) inside the pipeline. On Windows the size comes from `GetSystemMetrics`; on macOS a CoreGraphics query is planned, so the 1920x1080 fallback is used. **Neither path has been exercised** — and the Windows build did not compile at all until this crate declared the `windows` crate it uses.
+**Windows / macOS** (`desktop.rs`) — reports the primary display size only; capture itself is left to GStreamer's `d3d11screencapturesrc` (Windows) or `screencapturesrc`/`avfvideosrc` (macOS) inside the pipeline. On Windows the size comes from `GetSystemMetrics`; on macOS a CoreGraphics query is planned, so the 1920x1080 fallback is used. **Neither path has been exercised** — and the Windows build did not compile at all until #25 made this crate declare the `windows` crate it uses.
 
 ## Public API
 

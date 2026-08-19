@@ -172,6 +172,7 @@ covers every crate that builds without GStreamer or PipeWire —
 `openplay-capture` is on that list deliberately: its Windows build was broken by
 exactly this class of mistake (`desktop.rs` used the `windows` crate without
 declaring it), and an earlier five-crate version of this job did not cover it.
+Both the dependency and this list entry landed in #25.
 
 `openplay-pipeline`, `-sender` and `-receiver` need GStreamer and are still only
 built on Linux — the same blind spot, one layer up.
