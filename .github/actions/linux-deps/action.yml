@@ -3,6 +3,18 @@ description: >
   Installs the GStreamer and PipeWire headers the Linux jobs need, with the
   retry and non-interactive handling that a bare apt-get call lacks.
 
+  Only -base is installed, not -bad. No crate references gstreamer-webrtc,
+  -sdp or -video; openplay-pipeline uses gstreamer and gstreamer-app only, and
+  gstapp lives in -base. libgstreamer-plugins-bad1.0-dev hard-depends on
+  libopencv-dev, which is what made this step download 220 MB across 349
+  packages and time out. If the WebRTC path is ever wired up, add
+  libgstreamer-plugins-bad1.0-dev back here and expect that cost to return.
+
+  This is a CI-only trim, and docs/install.md must NOT be trimmed to match:
+  running the app needs gstreamer1.0-plugins-bad at runtime (h264parse lives
+  there). CI only compiles and runs unit tests, none of which call
+  gstreamer::init(), so no plugin is ever loaded.
+
 runs:
   using: composite
   steps:
@@ -41,8 +53,6 @@ runs:
               -o Acquire::Retries=3 \
               libgstreamer1.0-dev \
               libgstreamer-plugins-base1.0-dev \
-              libgstreamer-plugins-bad1.0-dev \
-              gstreamer1.0-plugins-bad \
               libpipewire-0.3-dev; then
             exit 0
           fi
