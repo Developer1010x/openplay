@@ -1,0 +1,54 @@
+name: Install Linux build dependencies
+description: >
+  Installs the GStreamer and PipeWire headers the Linux jobs need, with the
+  retry and non-interactive handling that a bare apt-get call lacks.
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        set -euo pipefail
+
+        # GitHub's ubuntu images run unattended-upgrades on boot, which holds
+        # the dpkg lock. apt-get then waits on it with no timeout and no output,
+        # which is indistinguishable from a hung runner. Wait explicitly instead,
+        # with a bound.
+        for _ in $(seq 1 60); do
+          if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            break
+          fi
+          echo "waiting for the dpkg lock to be released..."
+          sleep 5
+        done
+
+        # Both commands are retried: `update` because a single unreachable
+        # mirror fails the whole run, and `install` because a mirror can drop
+        # between resolving and fetching.
+        for attempt in 1 2 3; do
+          if sudo -E apt-get update -o Acquire::Retries=3; then
+            break
+          fi
+          echo "apt-get update failed (attempt $attempt/3), retrying..."
+          sleep $((attempt * 10))
+        done
+
+        for attempt in 1 2 3; do
+          if sudo -E apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              libgstreamer1.0-dev \
+              libgstreamer-plugins-base1.0-dev \
+              libgstreamer-plugins-bad1.0-dev \
+              gstreamer1.0-plugins-bad \
+              libpipewire-0.3-dev; then
+            exit 0
+          fi
+          echo "apt-get install failed (attempt $attempt/3), retrying..."
+          sleep $((attempt * 10))
+        done
+
+        echo "::error::Could not install the Linux build dependencies after 3 attempts."
+        exit 1

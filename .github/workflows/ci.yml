@@ -14,6 +14,7 @@ jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -21,14 +22,8 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        timeout-minutes: 10
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
@@ -54,6 +49,7 @@ jobs:
   cross-platform-check:
     name: Cross-platform check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +75,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       matrix:
         os: [ubuntu-24.04]
@@ -87,14 +84,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        timeout-minutes: 10
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
@@ -104,20 +95,15 @@ jobs:
   build:
     name: Build Release
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: [check, test]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        timeout-minutes: 10
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
