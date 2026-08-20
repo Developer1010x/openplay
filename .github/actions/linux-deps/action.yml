@@ -39,14 +39,24 @@ runs:
 
         # Both commands are retried: `update` because a single unreachable
         # mirror fails the whole run, and `install` because a mirror can drop
-        # between resolving and fetching.
+        # between resolving and fetching. But `update` is best-effort: if every attempt fails, the image's shipped
+        # package lists are usually still good enough to install from, so warn
+        # and let `install` be the step that actually decides. Without the
+        # explicit flag this loop fell through silently on total failure and
+        # the real error surfaced later as a confusing "unable to locate
+        # package".
+        updated=
         for attempt in 1 2 3; do
           if sudo -E apt-get update -o Acquire::Retries=3; then
+            updated=yes
             break
           fi
           echo "apt-get update failed (attempt $attempt/3), retrying..."
           sleep $((attempt * 10))
         done
+        if [ -z "$updated" ]; then
+          echo "::warning::apt-get update failed 3 times; installing from the image's existing package lists."
+        fi
 
         for attempt in 1 2 3; do
           if sudo -E apt-get install -y --no-install-recommends \

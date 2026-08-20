@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
+# A second push to a PR makes the first run's result worthless. Cancel it
+# rather than paying for both; master is excluded so pushed commits keep a
+# complete history of results.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -73,12 +83,9 @@ jobs:
           -p openplay-capture
 
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      matrix:
-        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -117,3 +124,18 @@ jobs:
           path: |
             target/release/openplay-sender
             target/release/openplay-receiver
+
+      # The .deb is built in the same job as the release binaries so it packages
+      # exactly what was just tested, and because the ubuntu runner is the only
+      # one with the GStreamer headers installed. There is deliberately no macOS
+      # job here: the .dmg is built by hand on a Mac, so CI stays on the free
+      # Linux runners.
+      - name: Build Debian package
+        run: packaging/build-deb.sh dist
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: openplay-deb
+          path: dist/*.deb
+          if-no-files-found: error

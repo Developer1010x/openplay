@@ -143,6 +143,28 @@ INFO openplay_pipeline::encoder: Selected encoder encoder=vah264enc label=... hw
 `hw=false` means it fell back to x264 — see
 [troubleshooting.md](troubleshooting.md#no-hardware-encoder-is-selected).
 
+## Debian package
+
+```bash
+cargo build --release
+packaging/build-deb.sh          # writes dist/openplay_<version>_<arch>.deb
+sudo apt install ./dist/openplay_0.1.0_amd64.deb
+```
+
+The script stages the two binaries plus everything under `data/` (desktop entry,
+AppStream metainfo, icon, and the D-Bus and polkit files Wi-Fi Direct needs), and
+computes the library `Depends` with `dpkg-shlibdeps` against the binaries it is
+about to ship, so that list cannot drift. The GStreamer *plugin* packages are
+listed by hand in the script instead, because they are dlopen'd at runtime and
+shlibdeps cannot see them — **if you change the plugin requirements above, change
+`runtime_deps` in `packaging/build-deb.sh` to match.**
+
+CI builds this on every run in the `Build Release` job and attaches it as the
+`openplay-deb` artifact. It is not published to any apt repository.
+
+There is no macOS `.dmg` job in CI — that build is done by hand on a Mac, which
+keeps CI on the free Linux runners.
+
 ## Flatpak
 
 A manifest exists at `flatpak/org.openplay.OpenPlay.yml`, along with a desktop

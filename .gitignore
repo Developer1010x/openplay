@@ -3,3 +3,4 @@
 *.swo
 .env
 .DS_Store
+/dist
