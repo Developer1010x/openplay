@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TLS/DTLS certificate management and pairing for OpenPlay"
 
 [dependencies]
+rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 sha2 = { workspace = true }
@@ -16,3 +17,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true }
+tokio-rustls = "0.26"
