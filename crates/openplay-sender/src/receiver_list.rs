@@ -81,6 +81,12 @@ impl DiscoveredReceiver {
     }
 
     /// Wi-Fi Direct device address (for P2P Miracast).
+    ///
+    /// Linux-only: its sole caller in `app.rs` starts a Wi-Fi Direct P2P cast,
+    /// which is gated to Linux because `wifi_direct.rs` drives wpa_supplicant
+    /// over D-Bus. Without this gate the method is dead code on macOS and
+    /// Windows, and `clippy -D warnings` fails there.
+    #[cfg(target_os = "linux")]
     pub fn wifi_direct_address(&self) -> Option<&str> {
         match self {
             DiscoveredReceiver::Miracast(r) => match &r.mode {
