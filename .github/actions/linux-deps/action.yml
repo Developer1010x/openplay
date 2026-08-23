@@ -37,6 +37,11 @@ runs:
           sleep 5
         done
 
+        # Both commands are wrapped in `timeout` as well as retried. A
+        # step-level `timeout-minutes:` in the workflow would NOT bound this:
+        # GitHub does not enforce step timeouts on a step whose `uses:` is a
+        # composite action, so the bound has to live here, inside the action.
+        #
         # Both commands are retried: `update` because a single unreachable
         # mirror fails the whole run, and `install` because a mirror can drop
         # between resolving and fetching. But `update` is best-effort: if every attempt fails, the image's shipped
@@ -47,7 +52,7 @@ runs:
         # package".
         updated=
         for attempt in 1 2 3; do
-          if sudo -E apt-get update -o Acquire::Retries=3; then
+          if sudo -E timeout 180 apt-get update -o Acquire::Retries=3; then
             updated=yes
             break
           fi
@@ -59,7 +64,7 @@ runs:
         fi
 
         for attempt in 1 2 3; do
-          if sudo -E apt-get install -y --no-install-recommends \
+          if sudo -E timeout 420 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 \
               libgstreamer1.0-dev \
               libgstreamer-plugins-base1.0-dev \

@@ -67,7 +67,10 @@ install -m 0644 data/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg \
 install -m 0644 data/dbus/org.openplay.wpa.conf     "$root/usr/share/dbus-1/system.d/"
 install -m 0644 data/polkit/10-openplay-wpa.rules   "$root/usr/share/polkit-1/rules.d/"
 
-install -m 0644 LICENSE "$root/usr/share/doc/openplay/copyright" 2>/dev/null || true
+# Hard-fails like every other install here: a Debian package without a
+# copyright file is policy-invalid, so a missing or renamed LICENSE must stop
+# the build rather than silently ship an unshippable .deb.
+install -m 0644 LICENSE "$root/usr/share/doc/openplay/copyright"
 
 # dpkg-shlibdeps wants a debian/control to exist relative to CWD. Give it a
 # throwaway one inside the staging root rather than polluting the repo.
