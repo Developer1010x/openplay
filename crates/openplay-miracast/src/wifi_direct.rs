@@ -302,6 +302,64 @@ async fn find_p2p_interface() -> anyhow::Result<String> {
     Ok(interfaces[0].to_string())
 }
 
+/// Pause the P2P Find scan, leaving the discovery listener in place.
+///
+/// wpa_supplicant's `Find` sweeps the radio across the P2P social channels,
+/// which takes the NIC off its associated channel for hundreds of milliseconds
+/// at a time. A cast that runs over the LAN on that same NIC — AirPlay,
+/// OpenPlay, or Miracast over infrastructure — sees those gaps as latency
+/// spikes, packet loss, or an outright `No route to host` on connect. Stop
+/// scanning for the duration of such a cast and call [`resume_discovery`]
+/// afterwards.
+///
+/// A Wi-Fi Direct P2P cast must NOT call this: `Connect` needs Find active for
+/// GO negotiation. See the note on [`WifiDirectManager::connect`].
+///
+/// Best-effort by design. Discovery is a convenience, the cast is the point, so
+/// a missing interface or a D-Bus denial is logged and shrugged off rather than
+/// failing the cast that asked for the pause.
+pub async fn pause_discovery() -> anyhow::Result<()> {
+    let interface_path = find_p2p_interface_path().await?;
+    let connection = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(
+        &connection,
+        WPA_SERVICE,
+        interface_path.as_str(),
+        WPA_P2P_INTERFACE,
+    )
+    .await?;
+    proxy
+        .call_method("StopFind", &())
+        .await
+        .map_err(|e| anyhow::anyhow!("P2P StopFind failed: {e}"))?;
+    info!("P2P Find paused for the duration of the cast");
+    Ok(())
+}
+
+/// Resume the P2P Find scan stopped by [`pause_discovery`].
+///
+/// The listener task set up by [`WifiDirectManager::start`] is still on the
+/// signal stream, so restarting `Find` is enough to make peers reappear; the
+/// manager does not need to be rebuilt.
+pub async fn resume_discovery() -> anyhow::Result<()> {
+    let interface_path = find_p2p_interface_path().await?;
+    let connection = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(
+        &connection,
+        WPA_SERVICE,
+        interface_path.as_str(),
+        WPA_P2P_INTERFACE,
+    )
+    .await?;
+    let find_args: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
+    proxy
+        .call_method("Find", &(find_args,))
+        .await
+        .map_err(|e| anyhow::anyhow!("P2P Find failed: {e}"))?;
+    info!("P2P Find resumed");
+    Ok(())
+}
+
 /// Run P2P discovery: start Find scan and listen for events.
 async fn run_p2p_discovery(
     interface_path: &str,

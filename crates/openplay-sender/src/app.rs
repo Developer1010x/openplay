@@ -31,6 +31,11 @@ pub struct SenderApp {
     status: String,
     is_casting: bool,
     stop_handle: Option<CastStopHandle>,
+    /// Whether we stopped the Wi-Fi Direct Find scan for the current cast, so
+    /// that we only resume a scan we ourselves paused. Linux-only, matching
+    /// `wifi_direct`, which drives wpa_supplicant over D-Bus.
+    #[cfg(target_os = "linux")]
+    p2p_discovery_paused: bool,
     status_rx: std_mpsc::Receiver<String>,
     status_tx: std_mpsc::SyncSender<String>,
 
@@ -149,6 +154,8 @@ impl SenderApp {
             status: "Searching for receivers...".to_string(),
             is_casting: false,
             stop_handle: None,
+            #[cfg(target_os = "linux")]
+            p2p_discovery_paused: false,
             status_rx,
             status_tx,
             show_add_airplay: false,
@@ -213,6 +220,8 @@ impl SenderApp {
             if done {
                 self.is_casting = false;
                 self.stop_handle = None;
+                #[cfg(target_os = "linux")]
+                self.resume_p2p_discovery();
             }
         }
     }
@@ -234,7 +243,49 @@ impl SenderApp {
         }
     }
 
+    /// Stop the Wi-Fi Direct Find scan for the duration of a cast that does not
+    /// need it.
+    ///
+    /// Find sweeps the radio off its associated channel, which shows up on the
+    /// LAN as latency spikes and, on connect, as `No route to host`. Every
+    /// protocol except Wi-Fi Direct P2P runs over that same interface, so every
+    /// one of them wants the scan quiet.
+    #[cfg(target_os = "linux")]
+    fn pause_p2p_discovery(&mut self) {
+        if self.p2p_discovery_paused {
+            return;
+        }
+        self.p2p_discovery_paused = true;
+        self.tokio_rt.spawn(async {
+            if let Err(e) = openplay_miracast::wifi_direct::pause_discovery().await {
+                warn!("Could not pause Wi-Fi Direct discovery: {e}");
+            }
+        });
+    }
+
+    /// Restart the Find scan paused by [`Self::pause_p2p_discovery`], so peers
+    /// reappear once the cast is over.
+    #[cfg(target_os = "linux")]
+    fn resume_p2p_discovery(&mut self) {
+        if !self.p2p_discovery_paused {
+            return;
+        }
+        self.p2p_discovery_paused = false;
+        self.tokio_rt.spawn(async {
+            if let Err(e) = openplay_miracast::wifi_direct::resume_discovery().await {
+                warn!("Could not resume Wi-Fi Direct discovery: {e}");
+            }
+        });
+    }
+
     fn start_cast(&mut self, receiver: DiscoveredReceiver) {
+        // A P2P cast needs Find active for GO negotiation; everything else is
+        // damaged by it. Decide before any pipeline is built.
+        #[cfg(target_os = "linux")]
+        if !receiver.is_wifi_direct() {
+            self.pause_p2p_discovery();
+        }
+
         let bitrate = self.config.max_bitrate_kbps;
         let fps = self.config.framerate;
         let force_sw = self.config.force_sw_encode;
