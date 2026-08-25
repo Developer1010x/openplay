@@ -1,0 +1,79 @@
+name: Install Linux build dependencies
+description: >
+  Installs the GStreamer and PipeWire headers the Linux jobs need, with the
+  retry and non-interactive handling that a bare apt-get call lacks.
+
+  Only -base is installed, not -bad. No crate references gstreamer-webrtc,
+  -sdp or -video; openplay-pipeline uses gstreamer and gstreamer-app only, and
+  gstapp lives in -base. libgstreamer-plugins-bad1.0-dev hard-depends on
+  libopencv-dev, which is what made this step download 220 MB across 349
+  packages and time out. If the WebRTC path is ever wired up, add
+  libgstreamer-plugins-bad1.0-dev back here and expect that cost to return.
+
+  This is a CI-only trim, and docs/install.md must NOT be trimmed to match:
+  running the app needs gstreamer1.0-plugins-bad at runtime (h264parse lives
+  there). CI only compiles and runs unit tests, none of which call
+  gstreamer::init(), so no plugin is ever loaded.
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        set -euo pipefail
+
+        # GitHub's ubuntu images run unattended-upgrades on boot, which holds
+        # the dpkg lock. apt-get then waits on it with no timeout and no output,
+        # which is indistinguishable from a hung runner. Wait explicitly instead,
+        # with a bound.
+        for _ in $(seq 1 60); do
+          if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            break
+          fi
+          echo "waiting for the dpkg lock to be released..."
+          sleep 5
+        done
+
+        # Both commands are wrapped in `timeout` as well as retried. A
+        # step-level `timeout-minutes:` in the workflow would NOT bound this:
+        # GitHub does not enforce step timeouts on a step whose `uses:` is a
+        # composite action, so the bound has to live here, inside the action.
+        #
+        # Both commands are retried: `update` because a single unreachable
+        # mirror fails the whole run, and `install` because a mirror can drop
+        # between resolving and fetching. But `update` is best-effort: if every attempt fails, the image's shipped
+        # package lists are usually still good enough to install from, so warn
+        # and let `install` be the step that actually decides. Without the
+        # explicit flag this loop fell through silently on total failure and
+        # the real error surfaced later as a confusing "unable to locate
+        # package".
+        updated=
+        for attempt in 1 2 3; do
+          if sudo -E timeout 180 apt-get update -o Acquire::Retries=3; then
+            updated=yes
+            break
+          fi
+          echo "apt-get update failed (attempt $attempt/3), retrying..."
+          sleep $((attempt * 10))
+        done
+        if [ -z "$updated" ]; then
+          echo "::warning::apt-get update failed 3 times; installing from the image's existing package lists."
+        fi
+
+        for attempt in 1 2 3; do
+          if sudo -E timeout 420 apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              libgstreamer1.0-dev \
+              libgstreamer-plugins-base1.0-dev \
+              libpipewire-0.3-dev; then
+            exit 0
+          fi
+          echo "apt-get install failed (attempt $attempt/3), retrying..."
+          sleep $((attempt * 10))
+        done
+
+        echo "::error::Could not install the Linux build dependencies after 3 attempts."
+        exit 1

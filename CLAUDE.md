@@ -119,4 +119,5 @@ Steps 1–5 describe the design. Neither binary performs any of it yet.
 | openplay-capture | Screen capture abstraction; PipeWire/XDG Portal on Linux |
 | openplay-common | `AppConfig` (TOML), XDG paths, logging init, shared constants |
 
-Non-crate directories: `data/` (desktop entry, AppStream metainfo, icon, and the D-Bus and polkit files Wi-Fi Direct needs), `flatpak/` (manifest), `docs/`, `.github/workflows/`.
+Non-crate directories: `data/` (desktop entry, AppStream metainfo, icon, and the D-Bus and polkit files Wi-Fi Direct needs), `flatpak/` (manifest), `packaging/` (`build-deb.sh`, which
+CI runs in the release job), `docs/`, `.github/workflows/`.

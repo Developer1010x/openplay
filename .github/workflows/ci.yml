@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
+# A second push to a PR makes the first run's result worthless. Cancel it
+# rather than paying for both; master is excluded so pushed commits keep a
+# complete history of results.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -14,21 +24,17 @@ jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
+      # No `timeout-minutes:` here — GitHub ignores it on composite-action
+      # steps. The apt calls are bounded with `timeout` inside the action.
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
@@ -54,6 +60,7 @@ jobs:
   cross-platform-check:
     name: Cross-platform check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -77,24 +84,17 @@ jobs:
           -p openplay-capture
 
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (ubuntu-24.04)
     runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        os: [ubuntu-24.04]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      # No `timeout-minutes:` here — GitHub ignores it on composite-action
+      # steps. The apt calls are bounded with `timeout` inside the action.
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
@@ -104,20 +104,16 @@ jobs:
   build:
     name: Build Release
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: [check, test]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      # No `timeout-minutes:` here — GitHub ignores it on composite-action
+      # steps. The apt calls are bounded with `timeout` inside the action.
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-bad \
-            libpipewire-0.3-dev
+        uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
@@ -131,3 +127,18 @@ jobs:
           path: |
             target/release/openplay-sender
             target/release/openplay-receiver
+
+      # The .deb is built in the same job as the release binaries so it packages
+      # exactly what was just tested, and because the ubuntu runner is the only
+      # one with the GStreamer headers installed. There is deliberately no macOS
+      # job here: the .dmg is built by hand on a Mac, so CI stays on the free
+      # Linux runners.
+      - name: Build Debian package
+        run: packaging/build-deb.sh dist
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: openplay-deb
+          path: dist/*.deb
+          if-no-files-found: error
