@@ -128,20 +128,19 @@ async fn run_session(
     info!("NTP server running on port {}", AIRPLAY_NTP_PORT);
 
     // Step 2: HTTP negotiate — try basic first, then authenticated if needed
-    let negotiated = match http_session::negotiate(receiver_addr, width, height, fps, &session_id)
-        .await
-    {
-        Ok(n) => {
-            info!("AirPlay negotiation complete (no auth required)");
-            n
-        }
-        Err(AirPlayError::Negotiation(ref msg)) if msg.contains("501") || msg.contains("403") => {
-            // Server requires authentication — try HAP pairing
-            info!("Receiver requires authentication, attempting HAP pairing");
-            negotiate_with_auth(receiver_addr, width, height, fps, &session_id).await?
-        }
-        Err(e) => return Err(e),
-    };
+    let negotiated =
+        match http_session::negotiate(receiver_addr, width, height, fps, &session_id).await {
+            Ok(n) => {
+                info!("AirPlay negotiation complete (no auth required)");
+                n
+            }
+            Err(AirPlayError::Negotiation(ref msg)) if wants_authentication(msg) => {
+                // Server requires authentication — try HAP pairing
+                info!("Receiver requires authentication, attempting HAP pairing");
+                negotiate_with_auth(receiver_addr, width, height, fps, &session_id).await?
+            }
+            Err(e) => return Err(e),
+        };
 
     // Step 3: Create mirror stream (optionally with FairPlay encryption)
     let mirror_stream = Arc::new(Mutex::new(MirrorStream::new(negotiated.stream)));
@@ -190,13 +189,33 @@ async fn run_session(
     Ok(())
 }
 
+/// Whether an unauthenticated `POST /stream` failure is worth retrying behind
+/// pairing.
+///
+/// This was `msg.contains("501") || msg.contains("403")`, which missed the two
+/// statuses real receivers actually answer with. A Mac with AirPlay Receiver
+/// set to *Everyone* and no password returns **404** — the legacy AirPlay 1
+/// endpoint simply does not exist there — and one with a password returns
+/// **470**. Neither matched, so casting gave up without ever attempting to
+/// pair, while `pair_probe` reached M4 happily by calling pair-setup directly.
+///
+/// Matching on the message text is crude — a body echoing "403" would trip it —
+/// but the status is not carried through `AirPlayError::Negotiation`, and
+/// widening the net here is strictly better than silently skipping pairing.
+/// Threading a real status code through is worth doing separately.
+fn wants_authentication(msg: &str) -> bool {
+    ["401", "403", "470", "501", "404"]
+        .iter()
+        .any(|code| msg.contains(code))
+}
+
 /// Negotiate AirPlay connection with authentication.
 ///
 /// Strategy:
 /// 1. GET /info to identify the device
-/// 2. If Apple TV 3rd gen (AppleTV3,x) → error (requires proprietary FairPlay)
-/// 3. If device supports transient pairing → HAP transient pair-setup + pair-verify
-/// 4. POST /stream on the verified connection
+/// 2. Warn — but do not refuse — on models that normally require FairPlay
+/// 3. If device supports transient pairing → HAP transient pair-setup
+/// 4. POST /stream over the encrypted control channel
 async fn negotiate_with_auth(
     receiver_addr: SocketAddr,
     width: u32,
@@ -216,12 +235,26 @@ async fn negotiate_with_auth(
     let model = &server_info.model;
     info!(model = %model, features = server_info.features.raw(), "Checking auth strategy");
 
-    // Step 2: Check if this is an Apple TV 3rd gen (FairPlay-only, not supported)
+    // Step 2: warn about hardware known to need FairPlay, but do not refuse on
+    // the model string alone.
+    //
+    // The string is self-reported and third-party receivers borrow it freely for
+    // client compatibility. A Vivitek NovoConnect on the test network advertises
+    // `AppleTV3,1` over mDNS and reports `AppleTV3,2` from GET /info while being
+    // neither: `rmodel=AirReceiver3,1`, no HomeKit pairing, and a `/fp-setup`
+    // that answers 200 to an empty body — nothing like the Apple hardware this
+    // check was written for. Refusing it up front meant never discovering that
+    // it authenticates fine and simply does not implement mirroring.
+    //
+    // Genuine Apple TV 2/3 still cannot work, but they will now say so
+    // themselves, which is both accurate and debuggable.
     if model.starts_with("AppleTV3") || model.starts_with("AppleTV2") {
-        return Err(AirPlayError::Negotiation(format!(
-            "{model} requires FairPlay authentication which is not supported. \
-             Use a newer Apple TV (4th gen+) or an AirPlay-compatible smart TV instead."
-        )));
+        warn!(
+            %model,
+            "This model normally requires FairPlay, which is not implemented. \
+             Continuing anyway — the string is self-reported and third-party \
+             receivers reuse it. Expect failure from the receiver if it is genuine."
+        );
     }
 
     // Step 3: Try HAP transient pair-setup (no PIN, for AirPlay 2 devices)
@@ -271,4 +304,40 @@ async fn negotiate_with_auth(
          AirPlay status in docs/crypto.md."
             .to_string(),
     ))
+}
+
+#[cfg(test)]
+mod auth_fallback_tests {
+    use super::wants_authentication;
+
+    /// The two statuses observed from real receivers that the original
+    /// `501 || 403` test missed, and which caused casting to skip pairing.
+    #[test]
+    fn retries_on_statuses_real_receivers_actually_send() {
+        assert!(
+            wants_authentication("POST /stream failed: HTTP/1.1 404 Not Found"),
+            "a Mac set to Everyone with no password answers 404"
+        );
+        assert!(
+            wants_authentication("POST /stream failed: HTTP/1.1 470 "),
+            "a Mac with Require Password answers 470"
+        );
+        assert!(
+            wants_authentication("POST /stream failed: HTTP/1.1 401 Unauthorized"),
+            "a receiver behind HTTP Digest answers 401"
+        );
+    }
+
+    #[test]
+    fn still_retries_on_the_original_two() {
+        assert!(wants_authentication("HTTP/1.1 501 Not Implemented"));
+        assert!(wants_authentication("HTTP/1.1 403 Forbidden"));
+    }
+
+    #[test]
+    fn does_not_retry_on_unrelated_failures() {
+        assert!(!wants_authentication("Connection refused (os error 61)"));
+        assert!(!wants_authentication("HTTP/1.1 500 Internal Server Error"));
+        assert!(!wants_authentication("connection closed while reading"));
+    }
 }
