@@ -82,22 +82,50 @@ pub struct PairedDevice {
 /// receiver *does* require is the `X-Apple-HKP` header — see `HKP_TRANSIENT`.
 ///
 /// Returns a PairSetupResult that can be used for pair-verify.
-pub async fn pair_setup_transient(addr: SocketAddr) -> anyhow::Result<PairSetupResult> {
-    pair_setup_internal(addr, "3939", true).await
+pub async fn pair_setup_transient(addr: SocketAddr) -> anyhow::Result<TransientSession> {
+    let (stream, session_key) = pair_setup_srp(addr, "3939", true).await?;
+    info!("Transient pair-setup complete — session key established");
+    Ok(TransientSession {
+        session_key,
+        stream,
+    })
+}
+
+/// Outcome of a *transient* pair-setup.
+///
+/// Transient pairing ends at M4. There is no M5/M6 identity exchange, so no
+/// long-term key pair exists, nothing is persisted, and there is no pair-verify
+/// to perform — the SRP session key keys the encrypted channel directly.
+///
+/// Running M5 anyway is what used to happen here, and the receiver responded by
+/// closing the connection immediately after a successful M4.
+///
+/// The key is only meaningful on the connection it was negotiated over, so the
+/// stream is handed back rather than dropped. Everything sent on it from this
+/// point must be encrypted; the receiver drops the connection on plaintext.
+pub struct TransientSession {
+    /// Shared SRP session key (`K`).
+    pub session_key: Vec<u8>,
+    /// The connection the key belongs to.
+    pub stream: TcpStream,
 }
 
 /// Perform pair-setup with an AirPlay receiver using a 4-digit PIN.
 ///
 /// This is the first-time pairing flow using SRP-6a.
 pub async fn pair_setup(addr: SocketAddr, pin: &str) -> anyhow::Result<PairSetupResult> {
-    pair_setup_internal(addr, pin, false).await
+    let (stream, session_key) = pair_setup_srp(addr, pin, false).await?;
+    pair_setup_identity_exchange(stream, &session_key).await
 }
 
-async fn pair_setup_internal(
+/// Runs pair-setup M1-M4 (the SRP half) and returns the connection plus the
+/// negotiated session key. Both pairing modes share this; only the PIN flow
+/// continues into M5/M6.
+async fn pair_setup_srp(
     addr: SocketAddr,
     pin: &str,
     transient: bool,
-) -> anyhow::Result<PairSetupResult> {
+) -> anyhow::Result<(TcpStream, Vec<u8>)> {
     let mut stream = TcpStream::connect(addr).await?;
     info!(%addr, transient, "Starting HAP pair-setup");
 
@@ -163,10 +191,21 @@ async fn pair_setup_internal(
     }
     info!("SRP-6a verification successful");
 
+    Ok((stream, session_key))
+}
+
+/// Pair-setup M5/M6: exchange and verify long-term identities.
+///
+/// PIN pairing only. Transient pairing has no identity to exchange and must not
+/// reach this.
+async fn pair_setup_identity_exchange(
+    mut stream: TcpStream,
+    session_key: &[u8],
+) -> anyhow::Result<PairSetupResult> {
     // Derive encryption key for M5/M6 exchange
     let enc_key = hkdf_derive(
         b"Pair-Setup-Encrypt-Salt",
-        &session_key,
+        session_key,
         b"Pair-Setup-Encrypt-Info",
         32,
     )?;
@@ -178,7 +217,7 @@ async fn pair_setup_internal(
     // Derive iOSDeviceX
     let device_x = hkdf_derive(
         b"Pair-Setup-Controller-Sign-Salt",
-        &session_key,
+        session_key,
         b"Pair-Setup-Controller-Sign-Info",
         32,
     )?;
@@ -241,7 +280,7 @@ async fn pair_setup_internal(
     // Verify accessory signature
     let accessory_x = hkdf_derive(
         b"Pair-Setup-Accessory-Sign-Salt",
-        &session_key,
+        session_key,
         b"Pair-Setup-Accessory-Sign-Info",
         32,
     )?;
