@@ -8,8 +8,10 @@
 //! See `docs/crypto.md`.
 
 mod certs;
+mod tls;
 
 pub use certs::CertificateManager;
+pub use tls::client_config_pinned;
 
 use sha2::{Digest, Sha256};
 

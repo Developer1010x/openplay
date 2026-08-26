@@ -56,7 +56,7 @@ Do not assume a feature works because a type for it exists. As of this writing:
 - **AirPlay sending** is partly working. HAP pairing used a fabricated SRP group and could never succeed; that is fixed and now uses the real RFC 5054 3072-bit group. Whether the handshake works end to end is still unconfirmed against hardware (issue #27). FairPlay **will not be implemented** — `fp_setup` has no callers and must not acquire any, and Apple TV 2nd/3rd generation are refused by model string by design. See the decision in `docs/crypto.md`.
 - **OpenPlay (WebRTC)** is **not wired to either binary**. `SenderPipeline`, `ReceiverPipeline`, `SignalingServer`, `SignalingClient` and `ReceiverAdvertiser` are implemented and have no callers. The sender's `Protocol::OpenPlay` arm sets a status string and stops; the receiver window is static.
 - **Screen capture is only exercised on Linux.** On macOS and Windows `CaptureSession` just reports the display size and capture is left to GStreamer's own elements; that path is untested. The Windows build was broken outright until #25 made `openplay-capture` declare the `windows` crate it uses.
-- **`CertificateManager`** is never constructed outside its own tests, and `openplay-crypto` no longer depends on `rustls`.
+- **`CertificateManager`** is never constructed outside its own tests. `openplay-crypto` depends on `rustls` again: #34 added the signaling channel's TLS config builders in `tls.rs`, and they have no callers either.
 - **Unused dependencies were removed** from every crate. If you wire up a path that needs `openplay-signaling`, `-protocol` or `-crypto`, re-add the declaration.
 
 ## Architecture
