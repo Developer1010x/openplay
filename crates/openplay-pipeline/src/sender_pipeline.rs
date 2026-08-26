@@ -55,12 +55,18 @@ impl SenderPipeline {
             })?;
         configure_encoder(&encoder, encoder_type, bitrate_kbps);
 
+        // Constrain alignment only. `vtenc_h264` offers just
+        // `stream-format=avc` and advertises no `profile` field, so requiring
+        // byte-stream or high profile straight out of the encoder makes this
+        // link fail on macOS — the same defect fixed in the AirPlay pipeline.
+        // Unlike that one this chain has no h264parse to convert with, but it
+        // does not need one: `rtph264pay` accepts avc and byte-stream alike, so
+        // letting the two negotiate is both correct and simpler.
         let h264_caps = gst::ElementFactory::make("capsfilter")
             .property(
                 "caps",
                 gst::Caps::builder("video/x-h264")
-                    .field("profile", "high")
-                    .field("stream-format", "byte-stream")
+                    .field("alignment", "au")
                     .build(),
             )
             .build()

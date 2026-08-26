@@ -13,7 +13,7 @@ use crate::PipelineError;
 /// Captures the screen, encodes to H.264, and outputs raw NALUs via `appsink`
 /// for the AirPlay mirror stream protocol.
 ///
-/// Pipeline: [capture src] → capsfilter(fps) → queue → encoder → capsfilter(h264,byte-stream) → h264parse → appsink
+/// Pipeline: [capture src] → capsfilter(fps) → queue → encoder → h264parse → capsfilter(h264,byte-stream) → appsink
 pub struct AirPlaySenderPipeline {
     pipeline: gst::Pipeline,
     appsink: gst_app::AppSink,
@@ -64,13 +64,24 @@ impl AirPlaySenderPipeline {
             })?;
         configure_encoder(&encoder, encoder_type, bitrate_kbps);
 
-        // H.264 output caps (byte-stream for raw NALUs)
+        // H.264 output caps (byte-stream for raw NALUs).
+        //
+        // This is linked *after* h264parse, not before it. `vtenc_h264` offers
+        // only `stream-format=avc` on its src pad, so demanding byte-stream
+        // straight out of the encoder leaves an empty caps intersection and the
+        // link fails outright on macOS. h264parse is the element that converts
+        // avc to byte-stream. `x264enc` advertises both formats, which is why
+        // the old order linked fine on Linux and hid this.
+        //
+        // `profile` is deliberately not constrained: `vtenc_h264` has no profile
+        // property and does not advertise the field, so pinning it here would
+        // just move the negotiation failure one element downstream.
         let h264_caps = gst::ElementFactory::make("capsfilter")
             .property(
                 "caps",
                 gst::Caps::builder("video/x-h264")
-                    .field("profile", "high")
                     .field("stream-format", "byte-stream")
+                    .field("alignment", "au")
                     .build(),
             )
             .build()
@@ -102,8 +113,8 @@ impl AirPlaySenderPipeline {
                 &capsfilter,
                 &video_queue,
                 &encoder,
-                &h264_caps,
                 &h264parse,
+                &h264_caps,
                 appsink.upcast_ref(),
             ])
             .map_err(|e| PipelineError::Gstreamer(format!("Failed to add elements: {e}")))?;
@@ -113,8 +124,8 @@ impl AirPlaySenderPipeline {
             &capsfilter,
             &video_queue,
             &encoder,
-            &h264_caps,
             &h264parse,
+            &h264_caps,
             appsink.upcast_ref(),
         ])
         .map_err(|e| PipelineError::Gstreamer(format!("Failed to link elements: {e}")))?;
