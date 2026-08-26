@@ -11,6 +11,7 @@
 //! On Linux, Miracast peers can additionally be found over Wi-Fi Direct; that
 //! lives in `openplay-miracast`, not here.
 
+pub mod address;
 mod advertiser;
 pub mod airplay_browser;
 pub mod airplay_record;
@@ -18,6 +19,7 @@ mod browser;
 pub mod miracast_browser;
 mod record;
 
+pub use address::sort_by_connectability;
 pub use advertiser::ReceiverAdvertiser;
 pub use airplay_browser::{AirPlayBrowser, AirPlayReceiverInfo};
 pub use airplay_record::AirPlayTxtRecord;

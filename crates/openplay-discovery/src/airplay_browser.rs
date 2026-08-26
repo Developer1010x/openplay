@@ -69,7 +69,12 @@ impl AirPlayBrowser {
                             let receiver_info = AirPlayReceiverInfo {
                                 name: info.get_fullname().to_string(),
                                 display_name,
-                                addresses: info.get_addresses().iter().copied().collect(),
+                                addresses: {
+                                    let mut addrs: Vec<_> =
+                                        info.get_addresses().iter().copied().collect();
+                                    crate::address::sort_by_connectability(&mut addrs);
+                                    addrs
+                                },
                                 port: info.get_port(),
                                 device_id: txt
                                     .as_ref()
