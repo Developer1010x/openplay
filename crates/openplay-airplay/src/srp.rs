@@ -165,9 +165,21 @@ pub fn client_compute(
     };
 
     // M1 = H(H(N) XOR H(g) | H(I) | s | A | B | K)
+    //
+    // `H(g)` is taken over g's *minimal* big-endian encoding — a single 0x05
+    // byte — not over PAD(g). This differs from `k` above, which RFC 5054
+    // explicitly defines as H(N | PAD(g)); the proof has no such padding rule
+    // and Apple's receivers do not apply one.
+    //
+    // Padding it here was why pair-setup failed at M4 with HAP error 2
+    // (authentication) against real hardware, even though every value in the
+    // exchange was otherwise correct. A client/server round-trip cannot catch
+    // this: both halves agree on the same wrong digest and the test passes.
+    // Verified against a Mac running AirTunes/950.7.1 — minimal encoding
+    // completes pair-setup, PAD(g) is rejected.
     let m1 = {
         let hash_n = Sha512::digest(n.to_bytes_be());
-        let hash_g = Sha512::digest(pad_to_n(&g, &n));
+        let hash_g = Sha512::digest(g.to_bytes_be());
         let hash_xor: Vec<u8> = hash_n
             .iter()
             .zip(hash_g.iter())
@@ -405,7 +417,7 @@ mod tests {
 
             let m1 = {
                 let hash_n = Sha512::digest(self.n.to_bytes_be());
-                let hash_g = Sha512::digest(pad_to_n(&self.g, &self.n));
+                let hash_g = Sha512::digest(self.g.to_bytes_be());
                 let xor: Vec<u8> = hash_n
                     .iter()
                     .zip(hash_g.iter())
