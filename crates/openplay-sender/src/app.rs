@@ -474,19 +474,29 @@ impl eframe::App for SenderApp {
                         let selected = self.selected_key.as_deref() == Some(key);
                         let (proto_label, proto_color) = protocol_badge(receiver.protocol());
 
+                        // The row cards are painted a fixed dark colour whatever the
+                        // app theme is, so their text colour has to be fixed too.
+                        // Inheriting the theme's default text colour put near-black
+                        // text on a near-black card in light mode.
+                        let (row_fill, name_colour) = if selected {
+                            (Color32::from_rgb(40, 80, 140), Color32::WHITE)
+                        } else {
+                            (Color32::from_gray(30), Color32::from_gray(235))
+                        };
+
                         let response = egui::Frame::none()
-                            .fill(if selected {
-                                Color32::from_rgb(40, 80, 140)
-                            } else {
-                                Color32::from_gray(30)
-                            })
+                            .fill(row_fill)
                             .rounding(6.0)
                             .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                             .show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new(receiver.display_name()).strong());
+                                        ui.label(
+                                            RichText::new(receiver.display_name())
+                                                .strong()
+                                                .color(name_colour),
+                                        );
                                         ui.label(
                                             RichText::new(receiver_subtitle(receiver))
                                                 .small()
