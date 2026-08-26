@@ -15,6 +15,7 @@
 //!   interoperate. Receivers that require it, such as Apple TV 3rd gen, will
 //!   reject the handshake. See [`fairplay`].
 
+pub mod control_channel;
 pub mod fairplay;
 pub mod features;
 pub mod hap_pairing;

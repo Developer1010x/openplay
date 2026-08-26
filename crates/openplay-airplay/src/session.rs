@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 
+use crate::control_channel;
 use crate::hap_pairing;
 use crate::http_session;
 use crate::mirror_stream::MirrorStream;
@@ -225,33 +226,49 @@ async fn negotiate_with_auth(
 
     // Step 3: Try HAP transient pair-setup (no PIN, for AirPlay 2 devices)
     info!("Attempting HAP transient pairing (no PIN)");
-    let pair_result = hap_pairing::pair_setup_transient(receiver_addr)
+    let session = hap_pairing::pair_setup_transient(receiver_addr)
         .await
         .map_err(|e| AirPlayError::Pairing(format!("Transient pairing failed: {e}")))?;
 
-    info!("Transient pair-setup succeeded, starting pair-verify");
+    info!("Transient pair-setup succeeded");
 
-    // Step 4: pair-verify to establish encrypted session
-    let paired_device = hap_pairing::PairedDevice {
-        device_id: pair_result.accessory_id.clone(),
-        accessory_ltpk: pair_result.accessory_ltpk,
-        client_ltsk: pair_result.client_ltsk,
-        client_ltpk: pair_result.client_ltpk,
-    };
+    // Step 4: everything after M4 is encrypted. There is no pair-verify in the
+    // transient flow — that belongs to PIN pairing, which exchanges long-term
+    // identities in M5/M6. Transient has none; the SRP session key keys the
+    // channel directly, and only on the connection it was negotiated over.
+    let mut control = control_channel::ControlChannel::new(session.stream, &session.session_key)
+        .map_err(|e| AirPlayError::Pairing(format!("Control channel setup failed: {e}")))?;
 
-    let (mut verified_stream, _verify_result) =
-        hap_pairing::pair_verify(receiver_addr, &paired_device)
-            .await
-            .map_err(|e| AirPlayError::Pairing(format!("Pair-verify failed: {e}")))?;
+    info!("Encrypted control channel established, sending POST /stream");
 
-    info!("Pair-verify succeeded, sending POST /stream");
+    let request = http_session::build_stream_request(width, height, fps, session_id)?;
+    let response = control
+        .request(&request)
+        .await
+        .map_err(|e| AirPlayError::Negotiation(format!("Encrypted POST /stream failed: {e}")))?;
 
-    // Step 5: POST /stream on the verified connection (with proper AirPlay headers)
-    http_session::post_stream_on(&mut verified_stream, width, height, fps, session_id).await?;
-    info!("POST /stream accepted after HAP pairing — mirror stream active");
+    let status = String::from_utf8_lossy(&response);
+    let status_line = status.lines().next().unwrap_or("<no status line>");
+    if !status_line.contains("200") {
+        return Err(AirPlayError::Negotiation(format!(
+            "POST /stream over the encrypted channel returned: {status_line}"
+        )));
+    }
 
-    Ok(http_session::NegotiatedStream {
-        stream: verified_stream,
-        server_info,
-    })
+    info!("POST /stream accepted over the encrypted control channel");
+
+    // Step 5: and here the implemented path ends. `MirrorStream` writes NAL
+    // units straight to a `TcpStream`, but every byte on this connection must
+    // now be wrapped in control-channel frames, so handing it the raw socket
+    // would emit plaintext into an encrypted stream and the receiver would drop
+    // the connection. Making the mirror stream encryption-aware is the
+    // remaining work; failing here with an explicit message beats returning a
+    // connection that cannot carry video.
+    let _ = server_info;
+    Err(AirPlayError::Negotiation(
+        "Transient pairing and the encrypted control channel now succeed, but the \
+         mirror stream cannot yet send video over an encrypted connection. See the \
+         AirPlay status in docs/crypto.md."
+            .to_string(),
+    ))
 }
