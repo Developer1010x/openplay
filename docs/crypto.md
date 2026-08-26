@@ -15,6 +15,7 @@ Original report: issue #8 (closed). Hardware confirmation is tracked in issue #2
 | HAP pair-verify | `airplay/hap_pairing.rs` | Implemented, unreachable until pairing is confirmed |
 | FairPlay | `airplay/fairplay.rs` | **Will not be implemented** (decision below), and not wired in — `fp_setup` has no callers |
 | TLS certificates | `openplay-crypto/certs.rs` | Implemented, never constructed anywhere |
+| Signaling TLS config | `openplay-crypto/tls.rs` | Implemented, no callers — fingerprint pinning, which is **not** peer authentication |
 
 ## HAP pair-setup — fixed
 
