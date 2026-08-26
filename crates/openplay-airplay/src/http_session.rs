@@ -317,6 +317,52 @@ pub async fn get_info_raw(
 
 /// Sends POST /stream with AirPlay headers on an already-open stream.
 /// Used by the auth flow after pair-verify.
+/// Builds a complete `POST /stream` request — headers and binary-plist body.
+///
+/// Split out so the same request can be sent either straight down a socket or
+/// wrapped in encrypted control-channel frames after a transient pair-setup.
+pub fn build_stream_request(
+    width: u32,
+    height: u32,
+    fps: u32,
+    session_id: &str,
+) -> Result<Vec<u8>, AirPlayError> {
+    let mut params = BTreeMap::new();
+    params.insert("width".to_string(), plist::Value::Integer(width.into()));
+    params.insert("height".to_string(), plist::Value::Integer(height.into()));
+    params.insert("fps".to_string(), plist::Value::Integer(fps.into()));
+    params.insert("overscanned".to_string(), plist::Value::Boolean(false));
+    params.insert("refreshRate".to_string(), plist::Value::Real(fps as f64));
+    params.insert(
+        "sessionID".to_string(),
+        plist::Value::String(session_id.to_string()),
+    );
+    params.insert(
+        "version".to_string(),
+        plist::Value::String("1.0".to_string()),
+    );
+
+    let plist_value = plist::Value::Dictionary(params.into_iter().collect());
+    let mut body = Vec::new();
+    plist_value
+        .to_writer_binary(&mut body)
+        .map_err(|e| AirPlayError::Plist(format!("Failed to encode plist: {e}")))?;
+
+    let mut request = format!(
+        "POST /stream HTTP/1.1\r\n\
+         User-Agent: {AIRPLAY_USER_AGENT}\r\n\
+         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Session-ID: {session_id}\r\n\
+         X-Apple-ProtocolVersion: 1\r\n\
+         Content-Type: application/x-apple-binary-plist\r\n\
+         Content-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    request.extend_from_slice(&body);
+    Ok(request)
+}
+
 pub async fn post_stream_on(
     stream: &mut TcpStream,
     width: u32,

@@ -83,23 +83,40 @@ async fn main() -> anyhow::Result<()> {
 
     // Step 2: the actual question — does SRP-6a agree with real hardware?
     println!("\n── HAP pair-setup");
+    // The two modes end in different places, so they cannot share a result type.
+    // PIN pairing runs M1-M6 and yields long-term identities; transient stops at
+    // M4 with only a session key, because there is no identity exchange.
     let result = match &pin {
         Some(p) => {
             println!("   mode: PIN ({p}) — expect a dialog on the receiver\n");
-            openplay_airplay::hap_pairing::pair_setup(addr, p).await
+            openplay_airplay::hap_pairing::pair_setup(addr, p)
+                .await
+                .map(|r| {
+                    format!(
+                        "accessory id:   {}\n   accessory LTPK: {}\n   client LTPK:    {}",
+                        r.accessory_id,
+                        hex(&r.accessory_ltpk),
+                        hex(&r.client_ltpk)
+                    )
+                })
         }
         None => {
             println!("   mode: transient (no PIN)\n");
-            openplay_airplay::hap_pairing::pair_setup_transient(addr).await
+            openplay_airplay::hap_pairing::pair_setup_transient(addr)
+                .await
+                .map(|s| {
+                    format!(
+                        "session key:    {} bytes (no long-term identity)",
+                        s.session_key.len()
+                    )
+                })
         }
     };
 
     match result {
-        Ok(r) => {
+        Ok(detail) => {
             println!("\n✅ PAIR-SETUP SUCCEEDED");
-            println!("   accessory id:   {}", r.accessory_id);
-            println!("   accessory LTPK: {}", hex(&r.accessory_ltpk));
-            println!("   client LTPK:    {}", hex(&r.client_ltpk));
+            println!("   {detail}");
             println!("\n   The SRP group is correct and the receiver accepted our M3 proof.");
         }
         Err(e) => {
