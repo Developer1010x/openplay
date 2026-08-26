@@ -18,7 +18,13 @@ impl ReceiverWindow {
         Self { config }
     }
 
-    /// The page shown while no sender is connected.
+    /// The page shown while the receiver cannot yet be reached.
+    ///
+    /// This deliberately does not say "waiting for a sender" or "listening on
+    /// port N". Neither was ever true: the receiver opens no socket and
+    /// advertises no mDNS service, so a sender cannot discover it or connect to
+    /// it. Claiming otherwise sent at least one person debugging their network
+    /// for a feature that does not exist.
     ///
     // TODO: Phase 1 — once the receiver pipeline is wired up, swap this for the
     // decoded video frames and go fullscreen when a sender connects.
@@ -27,10 +33,19 @@ impl ReceiverWindow {
             ui.add_space(ui.available_height() * 0.25);
             ui.heading(&self.config.display_name);
             ui.add_space(8.0);
-            ui.label("Waiting for a sender to connect...");
+            ui.label("Not reachable yet — this receiver is a placeholder.");
             ui.add_space(16.0);
             ui.label(
-                RichText::new(format!("Listening on port {}", self.config.port))
+                RichText::new(
+                    "It does not advertise itself over mDNS and accepts no\n\
+                     connections, so senders cannot discover or reach it.",
+                )
+                .color(Color32::GRAY),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Tracking: Developer1010x/openplay#11")
+                    .small()
                     .color(Color32::GRAY),
             );
         });
