@@ -1,7 +1,7 @@
 //! Probes a real AirPlay receiver: feature negotiation, then HAP pair-setup.
 //!
 //! This is the hardware check that no unit test in this repository can perform.
-//! It exists to answer the open question in issue #8 — whether the corrected
+//! It exists to answer the open question in issue #27 — whether the corrected
 //! RFC 5054 SRP group actually lets `pair_setup` succeed against real Apple
 //! hardware, rather than merely removing a known blocker.
 //!
@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(e) => {
             println!("\n❌ PAIR-SETUP FAILED: {e}");
-            println!("\n   Where it failed is what matters for issue #8:");
+            println!("\n   Where it failed is what matters for issue #27:");
             println!("   - 'Server proof verification failed' (M4) → SRP still disagrees");
             println!("   - missing salt/public key (M2)            → receiver refused earlier");
             println!("   - TLV8 error code in M4                   → receiver rejected the PIN");
