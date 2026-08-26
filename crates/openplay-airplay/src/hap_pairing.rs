@@ -71,8 +71,15 @@ pub struct PairedDevice {
 /// Perform transient pair-setup with an AirPlay 2 receiver (no PIN required).
 ///
 /// Transient pairing is used when the receiver allows "Everyone on the Same Network"
-/// access. The flags=0x02 (Transient) tells the receiver that no PIN dialog is needed.
-/// Uses SRP-6a with PIN "3939" (standard AirPlay transient code).
+/// access. Uses SRP-6a with PIN "3939" (standard AirPlay transient code).
+///
+/// The `FLAGS` TLV is sent as `0x02` in a single byte. HAP defines
+/// `kPairingFlag_Transient` as `0x00000010` in a uint32, so this value is
+/// wrong — but measurement against AirTunes/950.7.1 shows the receiver ignores
+/// the TLV entirely: `0x02`, a correct `0x10` uint32, and omitting `FLAGS`
+/// altogether all return an identical M2. It is left as-is rather than changed
+/// on spec-reading alone, since no receiver is known to care. What the
+/// receiver *does* require is the `X-Apple-HKP` header — see `HKP_TRANSIENT`.
 ///
 /// Returns a PairSetupResult that can be used for pair-verify.
 pub async fn pair_setup_transient(addr: SocketAddr) -> anyhow::Result<PairSetupResult> {
@@ -392,6 +399,16 @@ pub async fn pair_verify(
 
 // --- HTTP helpers for /pair-setup and /pair-verify ---
 
+/// HomeKit pairing type, sent as `X-Apple-HKP`.
+///
+/// Without this header the receiver answers **400 Bad Request** before looking
+/// at the body at all — it is how the endpoint selects a pairing flow, not an
+/// optional hint. Verified against a Mac running AirTunes/950.7.1: with the
+/// header, `/pair-setup` returns a real M2 (state, 16-byte salt, 384-byte
+/// public key); without it, 400 every time, regardless of `Host` or the value
+/// of the transient flag.
+const HKP_TRANSIENT: u8 = 4;
+
 async fn send_pair_setup(stream: &mut TcpStream, body: &[u8]) -> anyhow::Result<()> {
     send_post(stream, "/pair-setup", "application/octet-stream", body).await
 }
@@ -415,9 +432,10 @@ async fn send_post(
     body: &[u8],
 ) -> anyhow::Result<()> {
     let header = format!(
-        "POST {} HTTP/1.1\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
-        path,
-        content_type,
+        "POST {path} HTTP/1.1\r\n\
+         X-Apple-HKP: {HKP_TRANSIENT}\r\n\
+         Content-Type: {content_type}\r\n\
+         Content-Length: {}\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;
