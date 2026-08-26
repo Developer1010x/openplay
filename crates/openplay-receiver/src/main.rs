@@ -2,7 +2,7 @@ mod app;
 mod window;
 
 use clap::Parser;
-use tracing::info;
+use tracing::{info, warn};
 
 /// OpenPlay Receiver — Display incoming screen casts.
 #[derive(Parser, Debug)]
@@ -12,11 +12,18 @@ struct Args {
     #[arg(long)]
     config: Option<std::path::PathBuf>,
 
-    /// Override display name (shown in mDNS discovery).
+    /// Override display name (shown in the receiver window).
+    ///
+    /// This does *not* affect discovery: the receiver does not advertise
+    /// itself over mDNS yet, so no sender can find it by name.
     #[arg(long)]
     name: Option<String>,
 
-    /// Override signaling port.
+    /// Override signaling port. Reserved — has no effect yet.
+    ///
+    /// The receiver does not open a socket, so nothing binds this port. It is
+    /// accepted and validated so the flag keeps working once the signaling
+    /// server is wired up.
     #[arg(long)]
     port: Option<u16>,
 }
@@ -36,6 +43,13 @@ fn main() -> anyhow::Result<()> {
         config.display_name = name.clone();
     }
     if let Some(port) = args.port {
+        // Validated and stored, but nothing binds it: the receiver has no
+        // signaling server yet. Say so rather than letting the flag imply the
+        // receiver is reachable on that port.
+        warn!(
+            port,
+            "--port has no effect yet: this receiver does not listen for connections"
+        );
         config.port = port;
     }
 
