@@ -122,7 +122,11 @@ fn run_browser_thread(
                 let receiver_info = MiracastReceiverInfo {
                     name: info.get_fullname().to_string(),
                     display_name: display_name.clone(),
-                    addresses: info.get_addresses().iter().copied().collect(),
+                    addresses: {
+                        let mut addrs: Vec<_> = info.get_addresses().iter().copied().collect();
+                        crate::address::sort_by_connectability(&mut addrs);
+                        addrs
+                    },
                     port,
                     device_info: device_info.clone(),
                 };
