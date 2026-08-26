@@ -353,13 +353,7 @@ impl SenderApp {
                             .build()
                             .unwrap();
                         rt.block_on(start_miracast_cast(
-                            addr.ip(),
-                            bitrate,
-                            fps,
-                            force_sw,
-                            handle,
-                            stop,
-                            status_cb,
+                            addr, bitrate, fps, force_sw, handle, stop, status_cb,
                         ));
                     });
                 }
@@ -810,6 +804,25 @@ mod tests {
         // Parses as a u16 but asks the OS for an ephemeral port, which is
         // meaningless as a destination.
         assert_eq!(parse_port("0"), None);
+    }
+
+    /// The port a user types has to survive all the way to the socket. It used
+    /// to reach `MiracastMode::Infrastructure` correctly and then get dropped
+    /// at the call site, which passed `addr.ip()` into a function that
+    /// re-attached a hardcoded 7236.
+    #[test]
+    fn a_custom_miracast_port_survives_into_the_socket_address() {
+        let r = DiscoveredReceiver::Miracast(MiracastReceiver {
+            display_name: "linux box".to_string(),
+            mode: MiracastMode::Infrastructure {
+                addr: "192.168.0.105".parse().unwrap(),
+                port: 7290,
+            },
+        });
+
+        let addr = r.addr().expect("infrastructure mode always has an address");
+        assert_eq!(addr.port(), 7290, "the entered port must not be replaced");
+        assert_eq!(addr.to_string(), "192.168.0.105:7290");
     }
 
     #[test]

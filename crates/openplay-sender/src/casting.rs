@@ -14,8 +14,6 @@ use openplay_pipeline::{
     probe_best_encoder, AirPlaySenderPipeline, CaptureConfig, EncoderType, MiracastSenderPipeline,
 };
 
-const MIRACAST_RTSP_PORT: u16 = 7236;
-
 /// Handle that allows signalling an active cast to stop.
 #[derive(Clone)]
 pub struct CastStopHandle {
@@ -115,8 +113,11 @@ pub async fn start_airplay_cast(
 
 // ─── Miracast (Infrastructure / MICE) ─────────────────────────────────────────
 
+/// `sink_addr` carries the port the receiver was discovered or entered with.
+/// This used to take a bare `IpAddr` and re-attach a hardcoded 7236, which
+/// silently discarded the port from a manually added sink.
 pub async fn start_miracast_cast(
-    receiver_ip: std::net::IpAddr,
+    sink_addr: SocketAddr,
     bitrate_kbps: u32,
     framerate: u32,
     force_sw_encode: bool,
@@ -136,7 +137,6 @@ pub async fn start_miracast_cast(
     };
 
     let capture_config = make_capture_config(&capture, framerate);
-    let sink_addr = SocketAddr::new(receiver_ip, MIRACAST_RTSP_PORT);
     let stop_flag = stop_handle.flag();
 
     status_callback("Connecting via Miracast...");
