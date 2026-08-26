@@ -48,6 +48,7 @@ pub struct SenderApp {
     show_add_miracast: bool,
     miracast_name: String,
     miracast_addr: String,
+    miracast_port: String,
     miracast_is_p2p: bool,
 }
 
@@ -161,10 +162,11 @@ impl SenderApp {
             show_add_airplay: false,
             airplay_name: String::new(),
             airplay_ip: String::new(),
-            airplay_port: "7000".to_string(),
+            airplay_port: DEFAULT_AIRPLAY_PORT.to_string(),
             show_add_miracast: false,
             miracast_name: String::new(),
             miracast_addr: String::new(),
+            miracast_port: DEFAULT_MIRACAST_PORT.to_string(),
             miracast_is_p2p: false,
         }
     }
@@ -573,33 +575,45 @@ impl eframe::App for SenderApp {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Add").clicked() {
-                            if let Ok(ip) = IpAddr::from_str(&self.airplay_ip) {
-                                let port: u16 = self.airplay_port.parse().unwrap_or(7000);
-                                let name = if self.airplay_name.is_empty() {
-                                    self.airplay_ip.clone()
-                                } else {
-                                    self.airplay_name.clone()
-                                };
-                                let receiver = DiscoveredReceiver::AirPlay(
-                                    openplay_discovery::AirPlayReceiverInfo {
-                                        name: format!("manual-airplay-{ip}"),
-                                        display_name: name,
-                                        addresses: vec![ip],
-                                        port,
-                                        device_id: String::new(),
-                                        features: String::new(),
-                                        model: "Manual".to_string(),
-                                    },
-                                );
-                                self.add_receiver(receiver);
-                                info!(ip = %ip, port, "Added manual AirPlay receiver");
-                            } else {
-                                self.status = "Invalid IP address".to_string();
+                            // Only dismiss the dialog once something was
+                            // actually added: closing on a rejected entry threw
+                            // away what the user typed and left the complaint
+                            // stranded in the status bar with nothing to fix.
+                            match (
+                                IpAddr::from_str(&self.airplay_ip),
+                                parse_port(&self.airplay_port),
+                            ) {
+                                (Ok(ip), Some(port)) => {
+                                    let name = if self.airplay_name.is_empty() {
+                                        self.airplay_ip.clone()
+                                    } else {
+                                        self.airplay_name.clone()
+                                    };
+                                    let receiver = DiscoveredReceiver::AirPlay(
+                                        openplay_discovery::AirPlayReceiverInfo {
+                                            name: format!("manual-airplay-{ip}"),
+                                            display_name: name,
+                                            addresses: vec![ip],
+                                            port,
+                                            device_id: String::new(),
+                                            features: String::new(),
+                                            model: "Manual".to_string(),
+                                        },
+                                    );
+                                    self.add_receiver(receiver);
+                                    info!(ip = %ip, port, "Added manual AirPlay receiver");
+                                    self.show_add_airplay = false;
+                                    self.airplay_name.clear();
+                                    self.airplay_ip.clear();
+                                    self.airplay_port = DEFAULT_AIRPLAY_PORT.to_string();
+                                }
+                                (Err(_), _) => {
+                                    self.status = "Invalid IP address".to_string();
+                                }
+                                (_, None) => {
+                                    self.status = INVALID_PORT_MSG.to_string();
+                                }
                             }
-                            self.show_add_airplay = false;
-                            self.airplay_name.clear();
-                            self.airplay_ip.clear();
-                            self.airplay_port = "7000".to_string();
                         }
                         if ui.button("Cancel").clicked() {
                             self.show_add_airplay = false;
@@ -623,6 +637,12 @@ impl eframe::App for SenderApp {
                         "IP Address:"
                     });
                     ui.text_edit_singleline(&mut self.miracast_addr);
+                    // Wi-Fi Direct has no port to enter: the sink's address does
+                    // not exist until the P2P group forms.
+                    if !self.miracast_is_p2p {
+                        ui.label("Port:");
+                        ui.text_edit_singleline(&mut self.miracast_port);
+                    }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Add").clicked() {
@@ -631,7 +651,7 @@ impl eframe::App for SenderApp {
                             } else {
                                 self.miracast_name.clone()
                             };
-                            if self.miracast_is_p2p {
+                            let added = if self.miracast_is_p2p {
                                 if self.miracast_addr.len() >= 11
                                     && self.miracast_addr.contains(':')
                                 {
@@ -642,26 +662,45 @@ impl eframe::App for SenderApp {
                                         },
                                     });
                                     self.add_receiver(r);
+                                    true
                                 } else {
                                     self.status = "Invalid MAC address".to_string();
+                                    false
                                 }
-                            } else if let Ok(ip) = IpAddr::from_str(&self.miracast_addr) {
-                                let r = DiscoveredReceiver::Miracast(MiracastReceiver {
-                                    display_name: name,
-                                    mode: MiracastMode::Infrastructure {
-                                        addr: ip,
-                                        port: 7236,
-                                    },
-                                });
-                                self.add_receiver(r);
-                                info!(ip = %ip, "Added manual Miracast receiver");
                             } else {
-                                self.status = "Invalid IP address".to_string();
+                                match (
+                                    IpAddr::from_str(&self.miracast_addr),
+                                    parse_port(&self.miracast_port),
+                                ) {
+                                    (Ok(ip), Some(port)) => {
+                                        let r = DiscoveredReceiver::Miracast(MiracastReceiver {
+                                            display_name: name,
+                                            mode: MiracastMode::Infrastructure { addr: ip, port },
+                                        });
+                                        self.add_receiver(r);
+                                        info!(ip = %ip, port, "Added manual Miracast receiver");
+                                        true
+                                    }
+                                    (Err(_), _) => {
+                                        self.status = "Invalid IP address".to_string();
+                                        false
+                                    }
+                                    (_, None) => {
+                                        self.status = INVALID_PORT_MSG.to_string();
+                                        false
+                                    }
+                                }
+                            };
+
+                            // Same rule as the AirPlay dialog: keep the entry on
+                            // screen unless it was accepted.
+                            if added {
+                                self.show_add_miracast = false;
+                                self.miracast_name.clear();
+                                self.miracast_addr.clear();
+                                self.miracast_port = DEFAULT_MIRACAST_PORT.to_string();
+                                self.miracast_is_p2p = false;
                             }
-                            self.show_add_miracast = false;
-                            self.miracast_name.clear();
-                            self.miracast_addr.clear();
-                            self.miracast_is_p2p = false;
                         }
                         if ui.button("Cancel").clicked() {
                             self.show_add_miracast = false;
@@ -673,6 +712,30 @@ impl eframe::App for SenderApp {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Default port an AirPlay receiver listens on.
+const DEFAULT_AIRPLAY_PORT: u16 = 7000;
+
+/// Default RTSP port for Wi-Fi Display. OpenPlay is the RTSP *server* for
+/// Miracast, but a manually added sink may still listen elsewhere.
+const DEFAULT_MIRACAST_PORT: u16 = 7236;
+
+/// Message shown when a manually entered port will not parse.
+const INVALID_PORT_MSG: &str = "Invalid port — expected 1-65535";
+
+/// Parses a user-entered port, rejecting anything that is not a usable port.
+///
+/// The previous `parse().unwrap_or(7000)` swallowed typos silently: `70000`
+/// overflows a `u16` and `abc` is not a number, and both became 7000, so the
+/// dialog reported success and the cast then failed against a port the user
+/// never chose. Port 0 is rejected too — it parses fine but asks the OS for an
+/// ephemeral port, which is meaningless for a destination address.
+fn parse_port(raw: &str) -> Option<u16> {
+    match raw.trim().parse::<u16>() {
+        Ok(0) | Err(_) => None,
+        Ok(port) => Some(port),
+    }
+}
 
 fn protocol_badge(protocol: Protocol) -> (&'static str, Color32) {
     let color = match protocol {
@@ -709,5 +772,51 @@ fn receiver_subtitle(receiver: &DiscoveredReceiver) -> String {
             MiracastMode::Infrastructure { addr, port } => format!("{addr}:{port}"),
             MiracastMode::WifiDirect { device_address } => format!("P2P {device_address}"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ordinary_ports() {
+        assert_eq!(parse_port("7000"), Some(7000));
+        assert_eq!(parse_port("7236"), Some(7236));
+        assert_eq!(parse_port("1"), Some(1));
+        assert_eq!(parse_port("65535"), Some(65535));
+    }
+
+    #[test]
+    fn tolerates_surrounding_whitespace() {
+        assert_eq!(parse_port("  7000 "), Some(7000));
+        assert_eq!(parse_port("\t7236\n"), Some(7236));
+    }
+
+    /// The regression this helper exists for: `parse().unwrap_or(7000)` turned
+    /// every one of these into 7000 and reported success.
+    #[test]
+    fn rejects_what_unwrap_or_used_to_swallow() {
+        assert_eq!(parse_port("70000"), None, "overflows u16");
+        assert_eq!(parse_port("abc"), None, "not a number");
+        assert_eq!(parse_port(""), None, "empty");
+        assert_eq!(parse_port("   "), None, "whitespace only");
+        assert_eq!(parse_port("-1"), None, "negative");
+        assert_eq!(parse_port("70.00"), None, "not an integer");
+    }
+
+    #[test]
+    fn rejects_port_zero() {
+        // Parses as a u16 but asks the OS for an ephemeral port, which is
+        // meaningless as a destination.
+        assert_eq!(parse_port("0"), None);
+    }
+
+    #[test]
+    fn defaults_are_the_documented_protocol_ports() {
+        assert_eq!(DEFAULT_AIRPLAY_PORT, 7000);
+        assert_eq!(DEFAULT_MIRACAST_PORT, 7236);
+        assert_eq!(parse_port(&DEFAULT_AIRPLAY_PORT.to_string()), Some(7000));
+        assert_eq!(parse_port(&DEFAULT_MIRACAST_PORT.to_string()), Some(7236));
     }
 }
