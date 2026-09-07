@@ -1,8 +1,9 @@
 mod app;
+mod net;
 mod window;
 
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::info;
 
 /// OpenPlay Receiver — Display incoming screen casts.
 #[derive(Parser, Debug)]
@@ -14,16 +15,15 @@ struct Args {
 
     /// Override display name (shown in the receiver window).
     ///
-    /// This does *not* affect discovery: the receiver does not advertise
-    /// itself over mDNS yet, so no sender can find it by name.
+    /// This is the name senders see: it is published as the mDNS `dn` TXT key
+    /// and shown in the approval prompt on this screen.
     #[arg(long)]
     name: Option<String>,
 
-    /// Override signaling port. Reserved — has no effect yet.
+    /// Override the signaling port that senders connect to.
     ///
-    /// The receiver does not open a socket, so nothing binds this port. It is
-    /// accepted and validated so the flag keeps working once the signaling
-    /// server is wired up.
+    /// Also published over mDNS, so a sender discovers the override rather than
+    /// the default.
     #[arg(long)]
     port: Option<u16>,
 }
@@ -43,13 +43,6 @@ fn main() -> anyhow::Result<()> {
         config.display_name = name.clone();
     }
     if let Some(port) = args.port {
-        // Validated and stored, but nothing binds it: the receiver has no
-        // signaling server yet. Say so rather than letting the flag imply the
-        // receiver is reachable on that port.
-        warn!(
-            port,
-            "--port has no effect yet: this receiver does not listen for connections"
-        );
         config.port = port;
     }
 
@@ -58,6 +51,10 @@ fn main() -> anyhow::Result<()> {
     config.validate()?;
 
     openplay_common::ensure_dirs()?;
+
+    // GStreamer must be initialised before any pipeline is constructed, and the
+    // receiver builds one the moment a sender's offer arrives.
+    openplay_pipeline::init().map_err(|e| anyhow::anyhow!("GStreamer init failed: {e}"))?;
 
     app::run(config)
 }
