@@ -8,7 +8,7 @@ use openplay_common::AppConfig;
 use openplay_discovery::{AirPlayBrowser, DiscoveryEvent, MiracastBrowser, ReceiverBrowser};
 use tracing::{info, warn};
 
-use crate::casting::{start_airplay_cast, start_miracast_cast, CastStopHandle};
+use crate::casting::{start_airplay_cast, start_miracast_cast, CastSettings, CastStopHandle};
 use crate::receiver_list::{DiscoveredReceiver, MiracastMode, MiracastReceiver, Protocol};
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -291,6 +291,12 @@ impl SenderApp {
         let bitrate = self.config.max_bitrate_kbps;
         let fps = self.config.framerate;
         let force_sw = self.config.force_sw_encode;
+        let settings = CastSettings {
+            bitrate_kbps: bitrate,
+            framerate: fps,
+            force_sw_encode: force_sw,
+            display_name: self.config.display_name.clone(),
+        };
         let handle = self.tokio_rt.handle().clone();
         let stop = CastStopHandle::new();
         self.stop_handle = Some(stop.clone());
@@ -310,9 +316,7 @@ impl SenderApp {
                             .enable_all()
                             .build()
                             .unwrap();
-                        rt.block_on(start_airplay_cast(
-                            addr, bitrate, fps, force_sw, handle, stop, status_cb,
-                        ));
+                        rt.block_on(start_airplay_cast(addr, settings, handle, stop, status_cb));
                     });
                 }
             }

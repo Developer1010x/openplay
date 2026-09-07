@@ -12,8 +12,27 @@ use crate::AirPlayError;
 /// AirPlay client version string — must match a known AirPlay version to avoid
 /// rejection by third-party receivers (LG TVs, Samsung TVs, NOVO boards, etc.).
 const AIRPLAY_USER_AGENT: &str = "AirPlay/550.10";
-/// Device name advertised to the receiver.
-const OPENPLAY_DEVICE_NAME: &str = "OpenPlay";
+/// Device name sent to the receiver when the caller has no usable one.
+pub const DEFAULT_DEVICE_NAME: &str = "OpenPlay";
+
+/// Makes a display name safe to send as the `X-Apple-Device-Name` header.
+///
+/// The name comes from `config.toml` or `--name`. An HTTP header ends at the
+/// first line break, so a name containing one would cut the request short and
+/// let the rest of the name be read as further headers. Control characters
+/// are dropped, surrounding whitespace is trimmed, and a name with nothing
+/// left falls back to [`DEFAULT_DEVICE_NAME`] rather than sending an empty
+/// header. Anything else — including non-ASCII, which Apple's own senders
+/// use — is kept as typed.
+pub fn header_safe_device_name(name: &str) -> String {
+    let cleaned: String = name.chars().filter(|c| !c.is_control()).collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        DEFAULT_DEVICE_NAME.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
 
 /// Result of AirPlay HTTP negotiation.
 pub struct NegotiatedStream {
@@ -53,6 +72,7 @@ pub async fn negotiate(
     height: u32,
     fps: u32,
     session_id: &str,
+    device_name: &str,
 ) -> Result<NegotiatedStream, AirPlayError> {
     let mut stream = TcpStream::connect(addr)
         .await
@@ -61,7 +81,7 @@ pub async fn negotiate(
     info!(%addr, "Connected to AirPlay receiver");
 
     // Step 1: GET /info
-    let server_info = get_info(&mut stream, session_id).await?;
+    let server_info = get_info(&mut stream, session_id, device_name).await?;
     info!(
         model = %server_info.model,
         name = %server_info.device_name,
@@ -82,7 +102,7 @@ pub async fn negotiate(
     }
 
     // Step 2: POST /stream
-    post_stream(&mut stream, width, height, fps, session_id).await?;
+    post_stream(&mut stream, width, height, fps, session_id, device_name).await?;
 
     Ok(NegotiatedStream {
         stream,
@@ -91,11 +111,16 @@ pub async fn negotiate(
 }
 
 /// Sends GET /info with proper AirPlay headers and parses the binary plist response.
-async fn get_info(stream: &mut TcpStream, session_id: &str) -> Result<ServerInfo, AirPlayError> {
+async fn get_info(
+    stream: &mut TcpStream,
+    session_id: &str,
+    device_name: &str,
+) -> Result<ServerInfo, AirPlayError> {
+    let device_name = header_safe_device_name(device_name);
     let request = format!(
         "GET /info HTTP/1.1\r\n\
          User-Agent: {AIRPLAY_USER_AGENT}\r\n\
-         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Device-Name: {device_name}\r\n\
          X-Apple-Session-ID: {session_id}\r\n\
          X-Apple-ProtocolVersion: 1\r\n\
          Content-Length: 0\r\n\r\n"
@@ -118,7 +143,9 @@ async fn post_stream(
     height: u32,
     fps: u32,
     session_id: &str,
+    device_name: &str,
 ) -> Result<(), AirPlayError> {
+    let device_name = header_safe_device_name(device_name);
     let mut params = BTreeMap::new();
     params.insert("width".to_string(), plist::Value::Integer(width.into()));
     params.insert("height".to_string(), plist::Value::Integer(height.into()));
@@ -143,7 +170,7 @@ async fn post_stream(
     let request = format!(
         "POST /stream HTTP/1.1\r\n\
          User-Agent: {AIRPLAY_USER_AGENT}\r\n\
-         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Device-Name: {device_name}\r\n\
          X-Apple-Session-ID: {session_id}\r\n\
          X-Apple-ProtocolVersion: 1\r\n\
          Content-Type: application/x-apple-binary-plist\r\n\
@@ -299,11 +326,13 @@ fn parse_info_response(body: &[u8]) -> Result<ServerInfo, AirPlayError> {
 pub async fn get_info_raw(
     stream: &mut TcpStream,
     session_id: &str,
+    device_name: &str,
 ) -> Result<(String, Vec<u8>), AirPlayError> {
+    let device_name = header_safe_device_name(device_name);
     let request = format!(
         "GET /info HTTP/1.1\r\n\
          User-Agent: {AIRPLAY_USER_AGENT}\r\n\
-         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Device-Name: {device_name}\r\n\
          X-Apple-Session-ID: {session_id}\r\n\
          X-Apple-ProtocolVersion: 1\r\n\
          Content-Length: 0\r\n\r\n"
@@ -326,7 +355,9 @@ pub fn build_stream_request(
     height: u32,
     fps: u32,
     session_id: &str,
+    device_name: &str,
 ) -> Result<Vec<u8>, AirPlayError> {
+    let device_name = header_safe_device_name(device_name);
     let mut params = BTreeMap::new();
     params.insert("width".to_string(), plist::Value::Integer(width.into()));
     params.insert("height".to_string(), plist::Value::Integer(height.into()));
@@ -351,7 +382,7 @@ pub fn build_stream_request(
     let mut request = format!(
         "POST /stream HTTP/1.1\r\n\
          User-Agent: {AIRPLAY_USER_AGENT}\r\n\
-         X-Apple-Device-Name: {OPENPLAY_DEVICE_NAME}\r\n\
+         X-Apple-Device-Name: {device_name}\r\n\
          X-Apple-Session-ID: {session_id}\r\n\
          X-Apple-ProtocolVersion: 1\r\n\
          Content-Type: application/x-apple-binary-plist\r\n\
@@ -369,6 +400,55 @@ pub async fn post_stream_on(
     height: u32,
     fps: u32,
     session_id: &str,
+    device_name: &str,
 ) -> Result<(), AirPlayError> {
-    post_stream(stream, width, height, fps, session_id).await
+    post_stream(stream, width, height, fps, session_id, device_name).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Everything before the blank line that ends the headers.
+    fn header_block(request: &[u8]) -> String {
+        let text = String::from_utf8_lossy(request);
+        text.split("\r\n\r\n").next().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn stream_request_carries_the_configured_device_name() {
+        let request = build_stream_request(1920, 1080, 30, "S1", "Nikhil's Laptop").unwrap();
+        let headers = header_block(&request);
+        assert!(
+            headers.contains("X-Apple-Device-Name: Nikhil's Laptop\r\n"),
+            "{headers}"
+        );
+    }
+
+    #[test]
+    fn a_line_break_in_the_name_cannot_add_a_header() {
+        let request =
+            build_stream_request(1920, 1080, 30, "S1", "Laptop\r\nX-Injected: yes").unwrap();
+        let headers = header_block(&request);
+        assert!(!headers.contains("\r\nX-Injected"), "{headers}");
+        assert!(
+            headers.contains("X-Apple-Device-Name: LaptopX-Injected: yes\r\n"),
+            "{headers}"
+        );
+    }
+
+    #[test]
+    fn a_blank_name_falls_back_to_the_default() {
+        assert_eq!(header_safe_device_name(""), DEFAULT_DEVICE_NAME);
+        assert_eq!(header_safe_device_name("   "), DEFAULT_DEVICE_NAME);
+        assert_eq!(header_safe_device_name("\r\n\t"), DEFAULT_DEVICE_NAME);
+    }
+
+    #[test]
+    fn whitespace_is_trimmed_and_non_ascii_is_kept() {
+        assert_eq!(
+            header_safe_device_name("  Nikhil’s Laptop  "),
+            "Nikhil’s Laptop"
+        );
+    }
 }

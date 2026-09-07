@@ -34,6 +34,17 @@ pub enum SessionEvent {
     Ended(Option<AirPlayError>),
 }
 
+/// What `run_session` needs to negotiate with the receiver, besides its
+/// address: the video format to ask for, the session id, and the name the
+/// receiver shows for this sender.
+struct SessionParams {
+    width: u32,
+    height: u32,
+    fps: u32,
+    session_id: String,
+    device_name: String,
+}
+
 /// Orchestrates the full AirPlay mirroring session lifecycle:
 /// 1. Start NTP server
 /// 2. HTTP negotiate (GET /info → POST /stream)
@@ -51,29 +62,29 @@ impl AirPlaySession {
     /// * `width` - Video width
     /// * `height` - Video height
     /// * `fps` - Target framerate
+    /// * `device_name` - Name the receiver shows for this sender, sent as
+    ///   `X-Apple-Device-Name` on every request. Usually the configured
+    ///   `display_name`.
     pub async fn start(
         receiver_addr: SocketAddr,
         width: u32,
         height: u32,
         fps: u32,
+        device_name: &str,
     ) -> Result<Self, AirPlayError> {
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(16);
 
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let params = SessionParams {
+            width,
+            height,
+            fps,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            device_name: device_name.to_string(),
+        };
 
         tokio::spawn(async move {
-            if let Err(e) = run_session(
-                receiver_addr,
-                width,
-                height,
-                fps,
-                session_id,
-                cmd_rx,
-                evt_tx.clone(),
-            )
-            .await
-            {
+            if let Err(e) = run_session(receiver_addr, params, cmd_rx, evt_tx.clone()).await {
                 error!(%e, "AirPlay session error");
                 let _ = evt_tx.send(SessionEvent::Ended(Some(e))).await;
             }
@@ -116,10 +127,7 @@ impl AirPlaySession {
 
 async fn run_session(
     receiver_addr: SocketAddr,
-    width: u32,
-    height: u32,
-    fps: u32,
-    session_id: String,
+    params: SessionParams,
     mut cmd_rx: mpsc::Receiver<SessionCommand>,
     evt_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<(), AirPlayError> {
@@ -128,8 +136,15 @@ async fn run_session(
     info!("NTP server running on port {}", AIRPLAY_NTP_PORT);
 
     // Step 2: HTTP negotiate — try basic first, then authenticated if needed
-    let negotiated = match http_session::negotiate(receiver_addr, width, height, fps, &session_id)
-        .await
+    let negotiated = match http_session::negotiate(
+        receiver_addr,
+        params.width,
+        params.height,
+        params.fps,
+        &params.session_id,
+        &params.device_name,
+    )
+    .await
     {
         Ok(n) => {
             info!("AirPlay negotiation complete (no auth required)");
@@ -138,7 +153,7 @@ async fn run_session(
         Err(AirPlayError::Negotiation(ref msg)) if msg.contains("501") || msg.contains("403") => {
             // Server requires authentication — try HAP pairing
             info!("Receiver requires authentication, attempting HAP pairing");
-            negotiate_with_auth(receiver_addr, width, height, fps, &session_id).await?
+            negotiate_with_auth(receiver_addr, &params).await?
         }
         Err(e) => return Err(e),
     };
@@ -199,17 +214,18 @@ async fn run_session(
 /// 4. POST /stream on the verified connection
 async fn negotiate_with_auth(
     receiver_addr: SocketAddr,
-    width: u32,
-    height: u32,
-    fps: u32,
-    session_id: &str,
+    params: &SessionParams,
 ) -> Result<http_session::NegotiatedStream, AirPlayError> {
+    let (width, height, fps) = (params.width, params.height, params.fps);
+    let session_id = params.session_id.as_str();
+    let device_name = params.device_name.as_str();
+
     // Step 1: Reconnect and GET /info to check device type (with proper AirPlay headers).
     let mut stream = TcpStream::connect(receiver_addr)
         .await
         .map_err(|e| AirPlayError::Connection(format!("Failed to connect: {e}")))?;
 
-    let (_headers, body) = http_session::get_info_raw(&mut stream, session_id).await?;
+    let (_headers, body) = http_session::get_info_raw(&mut stream, session_id, device_name).await?;
     let server_info = http_session::parse_info_response_pub(&body)?;
     drop(stream); // Close the info connection
 
@@ -241,7 +257,7 @@ async fn negotiate_with_auth(
 
     info!("Encrypted control channel established, sending POST /stream");
 
-    let request = http_session::build_stream_request(width, height, fps, session_id)?;
+    let request = http_session::build_stream_request(width, height, fps, session_id, device_name)?;
     let response = control
         .request(&request)
         .await

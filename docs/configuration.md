@@ -25,7 +25,7 @@ specific and it cannot be honoured silently.
 ## Keys
 
 ```toml
-display_name     = "My Laptop"   # shown in the UI (mDNS advertising not wired up)
+display_name     = "My Laptop"   # shown in the UI and to AirPlay receivers (mDNS advertising not wired up)
 port             = 7290          # signaling port (receiver only)
 max_bitrate_kbps = 6000          # video bitrate
 framerate        = 30            # target frames per second
@@ -83,7 +83,7 @@ rather than surfacing later as an opaque GStreamer failure.
 ```
 openplay-sender
   --config <path>   Use a custom config file
-  --name <name>     Override the display name shown in the window
+  --name <name>     Override the display name shown in the window and sent to AirPlay receivers
 
 openplay-receiver
   --config <path>   Use a custom config file

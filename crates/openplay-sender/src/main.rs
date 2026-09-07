@@ -13,7 +13,7 @@ struct Args {
     #[arg(long)]
     config: Option<std::path::PathBuf>,
 
-    /// Override display name.
+    /// Override the display name shown in the window and sent to AirPlay receivers.
     #[arg(long)]
     name: Option<String>,
 }
