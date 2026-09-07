@@ -9,24 +9,58 @@ on:
 permissions:
   contents: read
 
-# A second push to a PR makes the first run's result worthless. Cancel it
-# rather than paying for both; master is excluded so pushed commits keep a
-# complete history of results.
+# A second push to a PR makes the first run's result worthless, so every run for
+# a given pull request shares one group and the older one is cancelled.
+#
+# Pushes to master get a group *per commit* — note `github.sha` in the key. The
+# previous version grouped every master push together and relied on
+# `cancel-in-progress: false` to preserve them, which does not work: GitHub also
+# cancels runs that are still *pending* in a group, so when commits landed close
+# together the earlier ones were cancelled before they ever started. That is how
+# 8 of the last 25 master runs ended up cancelled, leaving 5 merged commits that
+# have never been built at their own SHA. Only a unique group key prevents it.
+#
+# cancel-in-progress stays conditional rather than becoming `true`: with per-SHA
+# groups on master it would almost never fire, but a re-run of an existing master
+# run reuses the same group, and `true` would let the re-run cancel the run it
+# was launched from.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# ── Conventions used by every job below ───────────────────────────────────────
+#
+# `--locked` on every cargo invocation. Without it a PR that edits a Cargo.toml
+# without refreshing Cargo.lock passes CI, cargo silently resolves whatever
+# versions it likes, and the lockfile drift surfaces later as an unrelated diff.
+# With it, that PR fails immediately and says so. (`cargo fmt` takes no such
+# flag — it does not resolve dependencies.)
+#
+# Third-party actions are pinned to a major tag. actions/checkout and
+# actions/upload-artifact were on @v4, which declares `runs.using: node20`;
+# GitHub already force-runs those on Node 24 and warns on every step. Both are
+# now on @v7, the current major, which declares node24.
+#
+# @v5 would NOT have been enough for upload-artifact: v5.0.0 shipped
+# "preliminary" Node 24 support but still declares `using: 'node20'`, and v6.0.0
+# was the first release to actually switch. checkout@v5 is node24, but pinning
+# two majors behind only schedules this exercise again. Neither bump touches an
+# input used here — checkout is called with no inputs at all, and `name`, `path`
+# and `if-no-files-found` are unchanged through upload-artifact v7.
+
 jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 45, not 30: the apt step's own worst case is 39 minutes now that
+    # libgstreamer-plugins-bad1.0-dev is back. See linux-deps/action.yml.
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -42,17 +76,32 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-  # Every crate except openplay-pipeline, -sender and -receiver builds without
-  # GStreamer or PipeWire, so it can be checked on macOS and Windows with no
-  # system packages installed. This is what catches Linux-only code leaking out
-  # of its #[cfg] gate (see #6); the ubuntu-only matrix above cannot.
+  # Every workspace member except openplay-pipeline, -sender and -receiver builds
+  # without GStreamer or PipeWire, so it can be checked on macOS and Windows with
+  # no system packages installed. This is what catches Linux-only code leaking
+  # out of its #[cfg] gate (see #6); the ubuntu-only jobs cannot.
   #
-  # openplay-capture was added in #25, after its Windows build turned out to be
-  # broken for the same class of reason (src/desktop.rs used the `windows` crate
-  # without declaring it) and the five-crate version of this job did not cover it.
-  # -discovery and -signaling are added here for the same reason: no coverage.
+  # The three exclusions, each re-checked against the current dependency graph:
+  #
+  #   openplay-pipeline  links gstreamer, gstreamer-app, -webrtc, -sdp, -video.
+  #   openplay-sender    depends on openplay-pipeline, and on gstreamer and
+  #                      gstreamer-app directly.
+  #   openplay-receiver  depends on openplay-pipeline (see its Cargo.toml). It
+  #                      does not name a gstreamer crate itself. The comment
+  #                      that used to sit here claimed the receiver needed
+  #                      GStreamer, which was false when it was written — the
+  #                      receiver depended only on openplay-common until the
+  #                      WebRTC path was wired to the binaries. The exclusion
+  #                      was right by accident and is right on purpose now, for
+  #                      the transitive reason rather than the claimed one.
+  #
+  # Selected with `--workspace --exclude` rather than a hand-maintained `-p`
+  # list: a new crate is then covered by default instead of being silently
+  # uncovered, which is exactly how openplay-capture's broken Windows build
+  # survived until #25. Adding a crate that genuinely needs GStreamer now breaks
+  # this job, which is the right prompt to come and edit the list above.
   #
   # Note these crates cannot be cross-checked from Linux with `--target`, because
   # ring and rusqlite compile C that a Linux `cc` will not build for those hosts.
@@ -66,48 +115,87 @@ jobs:
       matrix:
         os: [macos-14, windows-2022]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Check portable crates
         run: >
-          cargo check --all-targets
-          -p openplay-common
-          -p openplay-protocol
-          -p openplay-crypto
-          -p openplay-discovery
-          -p openplay-signaling
-          -p openplay-airplay
-          -p openplay-miracast
-          -p openplay-capture
+          cargo check --locked --all-targets --workspace
+          --exclude openplay-pipeline
+          --exclude openplay-sender
+          --exclude openplay-receiver
+
+  # `cargo check` on the oldest toolchain this workspace can actually be built
+  # with, so a construct that needs a newer compiler cannot land unnoticed. Same
+  # crate selection as cross-platform-check, which keeps this to a bare
+  # `cargo check` with no apt step and makes it the cheapest job here.
+  #
+  # THE PIN BELOW IS NOT `[workspace.package] rust-version`. That field says
+  # "1.80", and 1.80 provably cannot build this workspace — cargo refuses at
+  # resolution, before compiling anything. Measured against the current
+  # Cargo.lock:
+  #
+  #   1.80  zvariant_utils 3.3.0 needs the `edition2024` cargo feature, which
+  #         was not stabilised until 1.85. Reached via zbus 5, which both
+  #         openplay-miracast and (through ashpd) openplay-capture depend on.
+  #   1.85  cargo reports time 0.3.47 requires rustc 1.88.0, and zbus,
+  #         zbus_macros, zvariant and zvariant_derive 5.x require 1.87.
+  #   1.88  resolves, and `cargo check --locked --all-targets` is clean.
+  #
+  # So 1.88.0 is the real floor and is what is pinned here. `rust-version` in the
+  # root Cargo.toml is wrong by eight minor versions and should be corrected to
+  # match; that file is outside this workflow's remit. When it is corrected, the
+  # two must move together — this pin is the number CI actually enforces.
+  msrv:
+    name: MSRV (1.88.0)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check portable crates on the MSRV toolchain
+        run: >
+          cargo check --locked --all-targets --workspace
+          --exclude openplay-pipeline
+          --exclude openplay-sender
+          --exclude openplay-receiver
 
   test:
     name: Test (ubuntu-24.04)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 45, not 30 — see the note on the check job.
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       # No `timeout-minutes:` here — GitHub ignores it on composite-action
       # steps. The apt calls are bounded with `timeout` inside the action.
+      #
+      # This job is the reason the action installs runtime GStreamer plugins as
+      # well as headers: webrtc_loopback.rs runs a real element graph.
       - name: Install system dependencies
         uses: ./.github/actions/linux-deps
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --all
+        run: cargo test --locked --all
 
   build:
     name: Build Release
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # 60: the apt step alone can take 39 minutes in its worst case, and the
+    # release build with thin LTO follows it.
+    timeout-minutes: 60
     needs: [check, test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       # No `timeout-minutes:` here — GitHub ignores it on composite-action
@@ -118,10 +206,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openplay-binaries
           path: |
@@ -130,14 +218,15 @@ jobs:
 
       # The .deb is built in the same job as the release binaries so it packages
       # exactly what was just tested, and because the ubuntu runner is the only
-      # one with the GStreamer headers installed. There is deliberately no macOS
-      # job here: the .dmg is built by hand on a Mac, so CI stays on the free
-      # Linux runners.
+      # one with the GStreamer headers installed. build-deb.sh runs no cargo of
+      # its own — it packages target/release, so the `--locked` above is what
+      # covers it. There is deliberately no macOS job here: the .dmg is built by
+      # hand on a Mac, so CI stays on the free Linux runners.
       - name: Build Debian package
         run: packaging/build-deb.sh dist
 
       - name: Upload Debian package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openplay-deb
           path: dist/*.deb
