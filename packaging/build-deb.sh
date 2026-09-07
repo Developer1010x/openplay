@@ -51,7 +51,6 @@ install -d "$root/DEBIAN" \
            "$root/usr/share/metainfo" \
            "$root/usr/share/icons/hicolor/scalable/apps" \
            "$root/usr/share/dbus-1/system.d" \
-           "$root/usr/share/polkit-1/rules.d" \
            "$root/usr/share/doc/openplay"
 
 install -m 0755 target/release/openplay-sender   "$root/usr/bin/"
@@ -62,10 +61,16 @@ install -m 0644 data/org.openplay.OpenPlay.metainfo.xml "$root/usr/share/metainf
 install -m 0644 data/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg \
                 "$root/usr/share/icons/hicolor/scalable/apps/"
 
-# Wi-Fi Direct needs to talk to wpa_supplicant over the system bus; without
-# these two the Miracast P2P path fails with a bare D-Bus access denial.
+# Wi-Fi Direct needs to talk to wpa_supplicant over the system bus; without this
+# the Miracast P2P path fails with a bare D-Bus access denial. Access is granted
+# by group membership (netdev) — see the file for why there is no wider fallback.
+#
+# No polkit rule is installed alongside it. data/polkit/10-openplay-wpa.rules
+# used to be shipped here and was dead weight: it matched
+# `action.id == "fi.w1.wpa_supplicant1"`, which is a D-Bus service name, not a
+# polkit action id. wpa_supplicant registers no polkit actions at all, so the
+# rule could never fire. It has been deleted rather than left to mislead.
 install -m 0644 data/dbus/org.openplay.wpa.conf     "$root/usr/share/dbus-1/system.d/"
-install -m 0644 data/polkit/10-openplay-wpa.rules   "$root/usr/share/polkit-1/rules.d/"
 
 # Hard-fails like every other install here: a Debian package without a
 # copyright file is policy-invalid, so a missing or renamed LICENSE must stop
@@ -94,11 +99,40 @@ if [ -z "$shlib_deps" ]; then
   exit 1
 fi
 
-# Plugins are dlopen'd, so shlibdeps cannot find them. gstreamer1.0-pipewire
-# supplies pipewiresrc (Linux capture) and -ugly supplies x264enc, the universal
-# software encoder fallback; both are hard requirements, not niceties.
-# See docs/install.md, which this list must stay in step with.
-runtime_deps="gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-pipewire, pipewire, xdg-desktop-portal"
+# Everything in the two lists below is dlopen'd at runtime. Nothing here leaves
+# an ELF NEEDED entry, so dpkg-shlibdeps cannot see any of it and none of it
+# will appear in $shlib_deps. Every entry was confirmed against this tree with
+# `dpkg -S` on the .so the loader actually opens — do not add one from memory.
+# See docs/install.md, which these lists must stay in step with.
+
+# GStreamer plugin packages. The element factories live in these *packages*; the
+# lib*.so that shlibdeps finds is a different thing and does not imply them.
+#
+#   -base    is listed EXPLICITLY. shlibdeps contributes
+#            libgstreamer-plugins-base1.0-0, which is the LIBRARY, while the
+#            `appsink` and `videoconvert` factories come from the PACKAGE
+#            gstreamer1.0-plugins-base. It was previously satisfied only by
+#            accident, because gstreamer1.0-plugins-bad happens to depend on it.
+#            Core elements must not ride on an unrelated package's Depends.
+#   -nice    supplies the ICE elements webrtcbin needs. Without it webrtcbin
+#            still constructs and then refuses every pad request, so the
+#            OpenPlay/WebRTC path fails after it looks like it came up.
+#   -libav   supplies avdec_h264, the receiver's software decode fallback.
+#   -ugly    supplies x264enc, the universal software encoder fallback.
+#   -pipewire supplies pipewiresrc, the Linux capture source.
+gst_deps="gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav, gstreamer1.0-nice, gstreamer1.0-pipewire"
+
+# GUI libraries. eframe/winit/glutin open all of these through libloading, so
+# the binaries name them only as strings in .rodata and shlibdeps reports none
+# of them. Omitting them is what let the .deb install cleanly and then fail to
+# launch on a machine with no other GL/Wayland application already pulling them
+# in. To re-derive the list:
+#   grep -ao 'lib[A-Za-z0-9_.+-]*\.so\.[0-9]*' target/release/openplay-sender | sort -u
+# libxcursor1/libxi6/libxrender1/libxkbcommon-x11-0 are the rest of the set
+# winit's X11 backend loads; it fails to initialise if any one is absent.
+gui_deps="libegl1, libgl1, libwayland-client0, libwayland-egl1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrender1"
+
+runtime_deps="$gst_deps, $gui_deps, pipewire, xdg-desktop-portal"
 
 cat > "$root/DEBIAN/control" <<EOF
 Package: openplay
@@ -112,8 +146,8 @@ Maintainer: OpenPlay contributors <noreply@github.com>
 Homepage: https://github.com/Developer1010x/openplay
 Description: Cast your screen to AirPlay, Miracast, or OpenPlay receivers
  OpenPlay mirrors your desktop to nearby receivers. Miracast sending works,
- including Wi-Fi Direct on Linux; AirPlay sending is partly working and the
- WebRTC path is not yet wired to the binaries.
+ including Wi-Fi Direct on Linux; the OpenPlay WebRTC path is wired to both
+ binaries, and AirPlay sending is partly working.
 EOF
 
 dpkg-deb --build --root-owner-group "$root" "$out_dir/$pkg.deb"
