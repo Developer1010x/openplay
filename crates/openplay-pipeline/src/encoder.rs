@@ -9,6 +9,19 @@ use crate::PipelineError;
 pub enum EncoderType {
     /// VA-API hardware encoder (Intel + AMD via Mesa — Linux).
     VaH264,
+    /// VA-API low-power hardware encoder (Linux).
+    ///
+    /// Several Intel generations — Tiger Lake among them — expose only the
+    /// low-power H.264 entrypoint, so the `va` plugin registers `vah264lpenc`
+    /// and never `vah264enc`. Probing for the latter alone drops those machines
+    /// to software encoding while a working hardware encoder sits unused.
+    VaH264Lp,
+    /// Legacy `gstreamer-vaapi` hardware encoder (Linux).
+    ///
+    /// Superseded by the `va` plugin, but still the only VA-API encoder present
+    /// on distributions that ship `gstreamer1.0-vaapi` without a new enough
+    /// `gst-plugins-bad`.
+    VaapiH264,
     /// NVIDIA NVENC hardware encoder (Linux/Windows).
     NvH264,
     /// Apple VideoToolbox hardware encoder (macOS).
@@ -24,6 +37,8 @@ impl EncoderType {
     pub fn factory_name(&self) -> &'static str {
         match self {
             EncoderType::VaH264 => "vah264enc",
+            EncoderType::VaH264Lp => "vah264lpenc",
+            EncoderType::VaapiH264 => "vaapih264enc",
             EncoderType::NvH264 => "nvh264enc",
             EncoderType::VtH264 => "vtenc_h264",
             EncoderType::MfH264 => "mfh264enc",
@@ -35,6 +50,8 @@ impl EncoderType {
     pub fn label(&self) -> &'static str {
         match self {
             EncoderType::VaH264 => "VA-API H.264 (Hardware)",
+            EncoderType::VaH264Lp => "VA-API H.264 low-power (Hardware)",
+            EncoderType::VaapiH264 => "VA-API H.264 legacy (Hardware)",
             EncoderType::NvH264 => "NVENC H.264 (Hardware)",
             EncoderType::VtH264 => "VideoToolbox H.264 (Hardware)",
             EncoderType::MfH264 => "Media Foundation H.264 (Hardware)",
@@ -90,7 +107,13 @@ pub fn probe_best_encoder() -> Result<EncoderType, PipelineError> {
 fn platform_encoder_candidates() -> &'static [EncoderType] {
     #[cfg(target_os = "linux")]
     {
-        &[EncoderType::VaH264, EncoderType::NvH264, EncoderType::X264]
+        &[
+            EncoderType::VaH264,
+            EncoderType::VaH264Lp,
+            EncoderType::VaapiH264,
+            EncoderType::NvH264,
+            EncoderType::X264,
+        ]
     }
     #[cfg(target_os = "macos")]
     {
@@ -109,13 +132,22 @@ fn platform_encoder_candidates() -> &'static [EncoderType] {
 /// Configures encoder properties for low-latency streaming.
 pub fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, bitrate_kbps: u32) {
     match encoder_type {
-        EncoderType::VaH264 => {
+        // Both `va` plugin encoders take the same property set.
+        EncoderType::VaH264 | EncoderType::VaH264Lp => {
             encoder.set_property_from_str("rate-control", "cbr");
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("key-int-max", 60u32);
             encoder.set_property_from_str("b-frames", "0");
             encoder.set_property("ref-frames", 1u32);
             encoder.set_property_from_str("target-usage", "6");
+        }
+        EncoderType::VaapiH264 => {
+            // The legacy plugin spells these differently to the `va` one and has
+            // no target-usage or ref-frames property.
+            encoder.set_property_from_str("rate-control", "cbr");
+            encoder.set_property("bitrate", bitrate_kbps);
+            encoder.set_property("keyframe-period", 60u32);
+            encoder.set_property("max-bframes", 0u32);
         }
         EncoderType::NvH264 => {
             encoder.set_property_from_str("rc-mode", "cbr");
@@ -233,11 +265,15 @@ mod tests {
     #[test]
     fn test_encoder_type_properties() {
         assert_eq!(EncoderType::VaH264.factory_name(), "vah264enc");
+        assert_eq!(EncoderType::VaH264Lp.factory_name(), "vah264lpenc");
+        assert_eq!(EncoderType::VaapiH264.factory_name(), "vaapih264enc");
         assert_eq!(EncoderType::NvH264.factory_name(), "nvh264enc");
         assert_eq!(EncoderType::VtH264.factory_name(), "vtenc_h264");
         assert_eq!(EncoderType::MfH264.factory_name(), "mfh264enc");
         assert_eq!(EncoderType::X264.factory_name(), "x264enc");
         assert!(EncoderType::VaH264.is_hardware());
+        assert!(EncoderType::VaH264Lp.is_hardware());
+        assert!(EncoderType::VaapiH264.is_hardware());
         assert!(EncoderType::NvH264.is_hardware());
         assert!(EncoderType::VtH264.is_hardware());
         assert!(EncoderType::MfH264.is_hardware());

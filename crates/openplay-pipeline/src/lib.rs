@@ -19,13 +19,15 @@ mod encoder;
 mod miracast_sender_pipeline;
 mod receiver_pipeline;
 mod sender_pipeline;
+mod webrtc;
 
 pub use airplay_sender_pipeline::AirPlaySenderPipeline;
 pub use capture_config::CaptureConfig;
 pub use encoder::{probe_best_encoder, EncoderType};
 pub use miracast_sender_pipeline::MiracastSenderPipeline;
-pub use receiver_pipeline::ReceiverPipeline;
+pub use receiver_pipeline::{FrameHandler, ReceiverPipeline, VideoFrame};
 pub use sender_pipeline::SenderPipeline;
+pub use webrtc::{log_bus_message, Role, SdpKind, WebRtcEvent, WebRtcPeer};
 
 use thiserror::Error;
 
