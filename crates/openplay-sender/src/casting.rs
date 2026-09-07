@@ -330,7 +330,7 @@ async fn run_airplay_pipeline(
         }
         frame_count += 1;
         // `is_multiple_of` is stable only since 1.87; the workspace MSRV is 1.80.
-        if frame_count % 300 == 0 {
+        if frame_count.is_multiple_of(300) {
             info!(frame_count, "AirPlay streaming...");
         }
     }
