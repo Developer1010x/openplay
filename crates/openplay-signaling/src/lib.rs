@@ -5,14 +5,14 @@
 //! carry [`SignalingMessage`](openplay_protocol::SignalingMessage)
 //! values over TLS, taking their rustls configuration from the caller.
 //!
-//! **Neither is constructed by either binary yet** — see the README Status
-//! section and `docs/protocols.md`.
+//! The receiver hosts a server in `openplay-receiver`'s `net` module; the
+//! sender dials it from `openplay-sender`'s `casting` module.
 
 mod client;
 mod server;
 
 pub use client::SignalingClient;
-pub use server::SignalingServer;
+pub use server::{ConnectionHandle, ConnectionId, IncomingMessage, SignalingServer};
 
 use thiserror::Error;
 

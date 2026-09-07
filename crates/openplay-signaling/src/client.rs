@@ -3,12 +3,31 @@ use futures_util::{SinkExt, StreamExt};
 use openplay_protocol::SignalingMessage;
 use rustls::ClientConfig;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::SignalingError;
+
+/// Largest signaling frame accepted from a peer.
+///
+/// The same limit the server applies, for the same reason and against the same
+/// class of peer. Dialling a receiver does not make it trusted: a hostile one
+/// on the LAN is the better attack position of the two, because the sender is
+/// the machine with a screen worth capturing. Tungstenite's default ceiling is
+/// 64 MiB, which the peer can use to make this end allocate — twice, since
+/// serde parses the text into owned `String` fields on top of the raw buffer.
+const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// How long the receiver may take to complete TLS and the WebSocket upgrade.
+///
+/// Without this, a receiver that accepts the socket and then stalls parks the
+/// cast forever with no error for the UI to report — which any peer on the LAN
+/// can arrange, since the sender dials whatever mDNS advertised.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// WebSocket signaling client for the sender.
 ///
@@ -41,14 +60,32 @@ impl SignalingClient {
 
         let connector = tokio_tungstenite::Connector::Rustls(self.tls_config.clone());
 
-        let (ws_stream, _response) = tokio_tungstenite::connect_async_tls_with_config(
+        let ws_config = WebSocketConfig {
+            max_message_size: Some(MAX_MESSAGE_BYTES),
+            max_frame_size: Some(MAX_MESSAGE_BYTES),
+            ..Default::default()
+        };
+
+        let connecting = tokio_tungstenite::connect_async_tls_with_config(
             self.url.as_str(),
-            None,
+            Some(ws_config),
             false,
             Some(connector),
-        )
-        .await
-        .map_err(|e| SignalingError::Connection(format!("WebSocket connect failed: {e}")))?;
+        );
+
+        let (ws_stream, _response) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting).await
+        {
+            Ok(Ok(connected)) => connected,
+            Ok(Err(e)) => {
+                return Err(
+                    SignalingError::Connection(format!("WebSocket connect failed: {e}")).into(),
+                )
+            }
+            Err(_) => {
+                warn!(url = %self.url, "Receiver did not complete the handshake in time");
+                return Err(SignalingError::Timeout.into());
+            }
+        };
 
         info!("Connected to receiver");
 
@@ -81,6 +118,15 @@ impl SignalingClient {
                     Ok(Message::Text(text)) => {
                         match serde_json::from_str::<SignalingMessage>(&text) {
                             Ok(msg) => {
+                                // The same gate the server applies to the
+                                // sender. Deserialising only proves the JSON
+                                // fits the shape; `validate` is what enforces
+                                // the documented bounds before the message
+                                // reaches a state machine or the UI.
+                                if let Err(e) = msg.validate() {
+                                    warn!("Rejecting message from receiver: {e}");
+                                    continue;
+                                }
                                 debug!(msg_type = ?std::mem::discriminant(&msg), "Received message");
                                 if incoming_tx.send(msg).await.is_err() {
                                     debug!("Incoming channel closed");

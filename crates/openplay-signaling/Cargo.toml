@@ -19,3 +19,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 tokio-rustls = "0.26"
+
+[dev-dependencies]
+openplay-crypto = { workspace = true }
+tempfile = { workspace = true }
