@@ -14,8 +14,9 @@ Original report: issue #8 (closed). Hardware confirmation is tracked in issue #2
 | HAP pair-setup (SRP-6a) | `airplay/srp.rs`, `hap_pairing.rs` | **Fixed**, untested against hardware |
 | HAP pair-verify | `airplay/hap_pairing.rs` | Implemented, unreachable until pairing is confirmed |
 | FairPlay | `airplay/fairplay.rs` | **Will not be implemented** (decision below), and not wired in — `fp_setup` has no callers |
-| TLS certificates | `openplay-crypto/certs.rs` | Implemented, never constructed anywhere |
-| Signaling TLS config | `openplay-crypto/tls.rs` | Implemented, no callers — fingerprint pinning, which is **not** peer authentication |
+| TLS certificates | `openplay-crypto/certs.rs` | In use — the receiver generates one on first launch |
+| Signaling TLS config | `openplay-crypto/tls.rs` | In use both ends — fingerprint pinning, which is **not** peer authentication |
+| OpenPlay pairing / auth | `openplay-protocol/message.rs` | **Not implemented.** Messages defined, nothing sends or handles them |
 
 ## HAP pair-setup — fixed
 
@@ -198,16 +199,59 @@ own tests. Replacing them with different invented constants would reproduce the
 defect exactly. If you cannot verify the values against a working
 implementation, leave them and leave the warning in place.
 
-## TLS certificates
+## TLS certificates and the signaling channel
 
 `openplay-crypto` implements a full self-signed ECDSA P-256 certificate
 lifecycle — `CertificateManager::load_or_generate`, `generate`, `cert_pem`,
-`key_pem`, `cert_der`, `fingerprint`, and path helpers.
+`key_pem`, `cert_der`, `fingerprint`, and path helpers — plus `tls.rs`, which
+builds the rustls configs the signaling channel uses.
 
-It is **never constructed outside its own tests**. The README used to claim
-certificates were "generated on first launch"; they are not, because nothing
-calls this crate. The signaling layer takes an `Arc<ClientConfig>` /
-`Arc<ServerConfig>` from the caller, and no caller exists yet.
+Both now have callers. `receiver/src/net.rs` calls `load_or_generate` against
+the data directory before anything else, so a certificate **is** generated on the
+receiver's first launch; it advertises the SHA-256 fingerprint in the mDNS `fp`
+TXT key and serves `server_config()`. `sender/src/casting.rs` calls
+`client_config_pinned(fingerprint)` with the value it read from that TXT record,
+and the `Protocol::OpenPlay` arm in `sender/src/app.rs` refuses to connect at all
+if the receiver advertised no fingerprint — there is no unpinned fall-back.
 
-This is not a defect in the crypto — it is part of the OpenPlay/WebRTC path not
-being wired up. See [protocols.md](protocols.md#openplay-webrtc).
+Ordering matters and is deliberate: the receiver registers the mDNS service
+*before* binding the socket, because the fingerprint in the TXT record has to
+describe the certificate the server is about to present.
+
+### What pinning does and does not buy
+
+This is the part to get right, because it is easy to describe as more than it is.
+
+The receiver's certificate is self-signed and its address is a bare LAN IP, so
+neither end can use webpki's usual path — there is no CA to chain to and no
+hostname to match. The pin replaces both, which gives:
+
+- **Confidentiality against a passive eavesdropper.** Yes.
+- **Detection of a substituted certificate on a later connection.** Yes, for a
+  sender that has seen the real one before.
+- **Authentication of the receiver.** **No.** The TXT record is unauthenticated.
+  An attacker on the same LAN can advertise a receiver carrying their own
+  fingerprint, and a sender meeting that receiver for the first time will pin
+  the attacker's certificate without complaint.
+
+Authentication needs the user to confirm a code shown on both screens, which is
+what `PairingChallenge` / `PairingResponse` / `PairingConfirm` in
+`openplay-protocol` are for. **They are not wired up.** Nothing sends them and
+nothing handles them, and the session goes straight from negotiation to SDP.
+
+In their absence the receiver's **consent prompt** is the entire access-control
+story: no sender is accepted until a human presses Allow. That is a real gate —
+it is not a substitute for pairing, and it should not be described as one. See
+[architecture.md](architecture.md#consent-is-the-security-model).
+
+### Tests
+
+`crates/openplay-crypto/tests/tls_handshake_test.rs` runs a real handshake three
+ways: it succeeds when the fingerprint matches; it fails when a different
+certificate is presented, which is what proves the verifier is not simply
+accepting everything; and a stock verifier with an empty trust store is shown to
+reject the very certificate the pinning verifier accepts, which is what makes
+pinning necessary here rather than merely convenient.
+
+`crates/openplay-signaling/tests/loopback.rs` carries the same property up a
+layer: a client pinning the wrong certificate is refused at the transport.

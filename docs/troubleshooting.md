@@ -13,9 +13,12 @@ first.
 
 | Symptom | Cause |
 |---|---|
-| Casting via "OpenPlay" does nothing, status flickers and stops | The OpenPlay/WebRTC path is not wired to the binaries |
+| An OpenPlay cast fails immediately, with nothing useful in the log | Almost always the missing `nice` GStreamer plugin — see [below](#openplay-webrtc) |
+| Sender says "Casting..." and nothing happens for a long time | Expected. It is waiting for a human at the receiver to press **Allow**, with no timeout |
+| Sender is told "The person at the receiver declined the cast" | Somebody pressed **Deny** |
+| Sender is told the receiver "did not publish a certificate fingerprint" | The receiver's mDNS TXT record had no `fp` key. The sender refuses to connect unpinned, by design |
 | Video casts but there is no sound | There is no audio support at all, on any protocol |
-| Receiver sits on "Waiting for a sender to connect…" forever | The receiver never starts a signaling server |
+| A Miracast cast ends within moments of the handshake succeeding | Was a defect in the session lifecycle, fixed; if you still see it, that is a bug worth reporting — see [Miracast](#miracast) |
 | No `config.toml` appeared before commit c06e1f7 | Fixed — `AppConfig::load_or_create_at` writes the defaults on first launch |
 | AirPlay refuses an older Apple TV up front | `AppleTV2,*`/`AppleTV3,*` are rejected by model because FairPlay is unimplemented, see [crypto.md](crypto.md) |
 | No screen capture on macOS | Capture there relies on GStreamer's `screencapturesrc`/`avfvideosrc` and has never been verified |
@@ -118,14 +121,80 @@ avahi-browse -a -t
 
 OpenPlay looks for:
 
-- `_openplay._tcp.local.` — other OpenPlay receivers. Nothing advertises this
-  yet, so it never matches
+- `_openplay._tcp.local.` — other OpenPlay receivers, which the receiver binary
+  now advertises for itself
 - `_airplay._tcp.local.` — AirPlay receivers
 - `_display._tcp.local.`, `_miracast._tcp.local.`, `_wfd._tcp.local.` — Miracast
 
 Common causes: a firewall blocking 5353, client isolation on the access point,
 being on a VPN, or the devices being on different VLANs. If `avahi-browse` shows
 the device and OpenPlay does not, that is a bug worth reporting.
+
+### An OpenPlay receiver does not appear
+
+Check the receiver's own window first. If mDNS registration failed it says
+**"Not discoverable on this network — senders must be pointed here by address"**
+and keeps listening anyway, which is a different problem from a receiver that
+never started.
+
+Then confirm what it is publishing:
+
+```bash
+avahi-browse -r _openplay._tcp
+```
+
+The TXT record must carry an `fp` key. Without it the sender refuses the
+receiver outright with "did not publish a certificate fingerprint" — that is
+deliberate, because connecting without a pin would mean trusting whichever host
+answered.
+
+## OpenPlay (WebRTC)
+
+### A cast fails instantly and the log says nothing useful
+
+Check the `nice` plugin before anything else:
+
+```bash
+gst-inspect-1.0 nice
+```
+
+If that prints `No such element or plugin 'nice'`, that is your bug.
+`webrtcbin` lives in `gst-plugins-bad`, but its ICE implementation comes from
+libnice and is packaged separately everywhere: `gstreamer1.0-nice` on
+Debian/Ubuntu, `libnice-gstreamer1` on Fedora, part of `libnice` on Arch. Without
+it `webrtcbin` constructs successfully and then **refuses every pad request**, so
+nothing links and no error names the cause. See
+[install.md](install.md#the-nice-plugin-specifically).
+
+The same applies to `cargo test --all`: the WebRTC loopback test asserts the
+plugin is present and fails with that message rather than hanging.
+
+### The sender sits at "Casting..." forever
+
+Working as designed — it is waiting for consent, and there is deliberately no
+timeout, because somebody may have to walk across a room. Look at the receiver's
+screen: it should be showing an **Allow / Deny** prompt naming the sender. Press
+Stop on the sender if you want out; the stop flag is polled every 250 ms even
+while the connection is silent.
+
+If the receiver is *not* showing a prompt, the session request never arrived —
+work back through TLS and discovery above.
+
+### "Receiver is already showing another device"
+
+One session at a time, because there is one screen. Stop the other cast, or wait
+for the receiver's 2-second liveness tick to notice a sender that disappeared
+without saying goodbye.
+
+### Connected, but the picture never appears
+
+The receiver shows a spinner and "Receiving from …" once the session connects
+but before the first decoded frame. If it stays there, media is not arriving:
+check that the sender picked an encoder at all
+([above](#no-hardware-encoder-is-selected)), and that nothing is filtering UDP
+between the two hosts. Only host ICE candidates are gathered — no
+STUN or TURN is contacted — so the two machines must have a direct route to each
+other on the LAN.
 
 ## AirPlay
 
@@ -157,6 +226,23 @@ cargo run -p openplay-airplay --example pair_probe -- <ip>:7000
 ```
 
 ## Miracast
+
+Before debugging anything here: **no cast in this repository has ever been
+confirmed against a real Miracast sink.** A failure is at least as likely to be
+an OpenPlay bug as a problem with your dongle, and a report saying what happened
+is worth more than a workaround.
+
+### The cast ends immediately after the handshake succeeds
+
+This was a bug in OpenPlay, not in any sink: the session emitted `Ended` on the
+line after `Ready` and dropped the RTSP socket as soon as M7 completed, so every
+cast died in milliseconds. It is fixed — `serve_control_channel` now holds the
+control connection open for the life of the cast.
+
+If you still see it, report it. Raise `RUST_LOG=openplay_miracast=debug` and look
+for `Holding RTSP control connection open` after the negotiation lines: if that
+appears and the cast still stops, the sink ended the session or the connection
+broke, and the log will say which.
 
 ### Wi-Fi Direct finds no peers (Linux)
 
@@ -198,9 +284,9 @@ ever been exercised there — capture on macOS and Windows is untested.
 Include:
 
 - Platform, and for Linux the desktop and session type (Wayland or X11)
-- `gst-inspect-1.0 --version`
+- `gst-inspect-1.0 --version`, and for anything WebRTC, `gst-inspect-1.0 nice`
 - Which protocol, and whether MICE or Wi-Fi Direct for Miracast
-- The receiver model
+- The receiver model, or for OpenPlay, both machines
 - Log output at `RUST_LOG=debug`
 
 For AirPlay and Miracast, whether it works with another sender (UxPlay,

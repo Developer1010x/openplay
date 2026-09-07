@@ -1,7 +1,10 @@
 # Design: AirPlay receiver on Linux
 
-**Status: design only. No code written.** This document exists so the FairPlay
-decision can be made before anyone starts building.
+**Status: design only. No code written, and none planned.** This document was
+written so the FairPlay decision could be made before anyone started building.
+That decision has since been made — the answer is no, see
+[crypto.md](crypto.md#fairplay--not-fixed) — so what follows is kept for its
+protocol value, not as a roadmap.
 
 The goal is the direction OpenPlay does not currently support: an iPhone, iPad
 or Mac casts **to** a Linux machine, which decodes and displays the stream. That
@@ -158,13 +161,15 @@ unfinished — doing both at once is probably cheaper than doing them separately
 3. HTTP server skeleton with `/info` answering a real plist
 4. HAP pair-setup and pair-verify, server side — at this point an Apple device
    will pair and then stop at FairPlay
-5. **Decision point on FairPlay**
+5. **FairPlay — where it stops.** Not a decision point any more: the decision was
+   made and recorded in [crypto.md](crypto.md#fairplay--not-fixed)
 6. Mirroring receive and render
 7. RAOP audio
 
-Steps 1–4 are worth doing whatever is decided at step 5: they are testable
-against the existing client implementation without any Apple hardware, and step
-1 in particular strengthens what is already shipped.
+Steps 1–4 remain worth doing despite step 5: they are testable against the
+existing client implementation without any Apple hardware, and step 1 in
+particular strengthens what is already shipped. Steps 6–7 produce something no
+Apple sender will talk to.
 
 ## What this is not
 
@@ -180,6 +185,9 @@ Steps 1–3 are a few days. Step 4 is perhaps a week and is the most
 specification-heavy part, though the SRP core is already written and tested.
 Steps 6–7 are the bulk of the work and where UxPlay's maturity shows.
 
-None of it produces something an iPhone will cast to until FairPlay is resolved.
-That is the decision to make first, and it is a licensing and policy judgement
-rather than a technical one.
+None of it produces something an iPhone will cast to, because FairPlay is not
+going to be resolved here. That was a licensing and policy judgement rather than
+a technical one, and it is settled — see
+[crypto.md](crypto.md#decision-fairplay-will-not-be-implemented-here). Build
+steps 1–4 for what they are worth on the sender side; do not start steps 6–7
+expecting a working receiver at the end.

@@ -27,7 +27,8 @@
 
 - **[airplay-receiver-design.md](airplay-receiver-design.md)** — design for
   receiving AirPlay on Linux (iPhone or Mac casting *to* this machine). Design
-  only, no code, blocked on the FairPlay decision
+  only, no code. Kept for its protocol value: the FairPlay decision has been
+  made and it rules the useful half of this out
 
 ## Start here
 
@@ -45,5 +46,11 @@ Depending on what you are doing:
 | Send a pull request | [contributing.md](contributing.md) |
 
 The [README](../README.md) Status section is the authority on what currently
-works. These documents describe the design, including parts that are built but
-not yet connected — where that is true, they say so explicitly.
+works, and its Security model section is worth reading before you point a
+receiver at an untrusted network.
+
+Read every "works" here carefully. All three casting paths are now connected to
+the binaries, so the interesting distinction is no longer *wired* versus
+*unwired* but **wired versus verified** — and none of them has a confirmed
+success against the hardware or second machine it aims at. Where a claim rests
+only on an in-process test, these documents say so.
