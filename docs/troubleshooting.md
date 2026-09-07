@@ -132,9 +132,26 @@ the device and OpenPlay does not, that is a bug worth reporting.
 ### Rejected during pairing
 
 Pairing previously could never succeed — the SRP group was fabricated. That is
-fixed, but **has not been confirmed against physical hardware**. If you hit a
-pairing failure, `RUST_LOG=openplay_airplay=debug` will show which message it
-died on, and that result is worth adding to issue #27 either way.
+fixed, and transient pair-setup is **confirmed against a Mac running
+AirTunes/950.7.1** (issue #27). If you hit a pairing failure anyway,
+`RUST_LOG=openplay_airplay=debug` will show which message it died on, and that
+result is worth adding to #27 either way.
+
+Two failures are not what they look like:
+
+- **HAP error `0x03` with a retry delay.** The receiver backs off hard after a
+  failed pair-setup and keeps answering with backoff for roughly two minutes.
+  It is not an authentication failure and not a result. Wait, then re-run.
+- **The connection closes right after a successful M4.** Transient pairing ends
+  at M4. Anything sent in plaintext after it — an M5 included — makes the
+  receiver drop the connection.
+
+### "mirror stream cannot yet send video over an encrypted connection"
+
+Pairing and the encrypted control channel both succeeded, and the cast stopped
+because the mirror stream cannot yet frame video for the encrypted post-pairing
+connection. This is the current end of the authenticated path, not a network
+problem. See [crypto.md](crypto.md#confirmed-against-hardware).
 
 ### "requires FairPlay authentication which is not supported"
 

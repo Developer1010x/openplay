@@ -7,9 +7,10 @@
 //! [`crate::srp`], whose tests re-derive it from RFC 3526's formula and check
 //! the client against an independent implementation of the server side.
 //!
-//! That removes the known blocker to pairing with real hardware. It has not
-//! been confirmed against physical Apple hardware, so treat pairing as
-//! untested-in-the-field rather than proven.
+//! Transient pair-setup is confirmed against physical Apple hardware: a Mac
+//! running AirTunes/950.7.1 completes SRP-6a verification (issue #27). That
+//! flow ends at M4 and hands the connection to [`crate::control_channel`];
+//! there is no pair-verify in it.
 //!
 //! Note that a receiver requiring FairPlay will still fail later in the
 //! session, for an unrelated reason — see [`crate::fairplay`].

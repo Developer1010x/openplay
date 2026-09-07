@@ -137,12 +137,14 @@ implementation, do not invent one. Leave it unimplemented with a warning.
   [airplay-receiver-design.md](airplay-receiver-design.md)
 - macOS and Windows screen capture backends
 - AirPlay and Miracast receiver support
-- Confirming AirPlay HAP pairing against real hardware — one `pair_probe` run,
-  see [#27](https://github.com/Developer1010x/openplay/issues/27)
+- Confirming AirPlay mirroring end to end. Pairing itself is confirmed
+  ([#27](https://github.com/Developer1010x/openplay/issues/27)); what is missing
+  is a mirror stream that can write into the encrypted post-pairing connection,
+  and a receiver that mirrors without FairPlay to test it against
+- Testing against real AirPlay and Miracast hardware — genuinely valuable, since
+  no test in this repo can substitute
+- Packaging (Flatpak, Homebrew, Winget, AUR)
 
 **Not** useful: porting Apple's FairPlay key tables. That was considered and
 declined — see [crypto.md](crypto.md#fairplay--not-fixed). A PR adding them will
 be closed, so please do not spend time on it.
-- Testing against real AirPlay and Miracast hardware — genuinely valuable, since
-  no test in this repo can substitute
-- Packaging (Flatpak, Homebrew, Winget, AUR)

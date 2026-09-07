@@ -9,7 +9,7 @@ audio, even where the protocol layer advertises it — see
 | Protocol | Discovery | Session setup | Transport | State |
 |---|---|---|---|---|
 | Miracast | mDNS + Wi-Fi Direct | RTSP M1–M7 | RTP/MPEG2-TS over UDP | Works |
-| AirPlay | mDNS `_airplay._tcp` | HTTP/plist + HAP | Mirror stream (TCP) | Pairing unconfirmed; FairPlay not wired in |
+| AirPlay | mDNS `_airplay._tcp` | HTTP/plist + HAP | Mirror stream (TCP) | Pairing confirmed against hardware; mirroring unconfirmed; FairPlay not wired in |
 | OpenPlay | mDNS `_openplay._tcp` | WebSocket signaling | WebRTC | Sender browses; everything else is libraries only |
 
 ---
@@ -85,10 +85,13 @@ flow at all** — see [crypto.md](crypto.md).
      `POST /stream`
    - if that fails with **501 or 403**, falls back to `negotiate_with_auth`:
      `GET /info` to identify the model, then HAP **transient** pair-setup
-     followed by pair-verify (`hap_pairing.rs`), then `POST /stream` on the
-     verified connection
-   - wraps the resulting connection in a `MirrorStream` and starts a 2-second
-     heartbeat
+     (`hap_pairing.rs`), which ends at M4 — there is no pair-verify — then
+     wraps the same connection in the encrypted control channel
+     (`control_channel.rs`) and sends `POST /stream` through it. The path
+     currently **stops there with an explicit error**: `MirrorStream` writes
+     to a raw socket and cannot yet frame video for the encrypted connection
+   - on the unauthenticated path, wraps the resulting connection in a
+     `MirrorStream` and starts a 2-second heartbeat
 4. `AirPlaySenderPipeline` captures and encodes, emitting H.264 NAL units to an
    appsink
 5. The casting loop copies the SPS/PPS out of the first frame and sends them once
@@ -121,14 +124,21 @@ frames video, codec data and heartbeats onto it.
 ### Pairing modes
 
 - `pair_setup_transient(addr)` — no PIN. Used when the receiver is set to
-  "Everyone on the Same Network". Sends flags `0x02` and uses the standard
-  transient PIN `3939`. **This is the only mode the session path uses.**
-- `pair_setup(addr, pin)` — first-time pairing with a 4-digit PIN. Reachable via
-  the `pair_probe` example, not from the session flow.
-- `pair_verify(...)` — subsequent connections, using stored Ed25519 keys.
+  "Everyone on the Same Network". Sends `X-Apple-HKP: 4`, flags `0x02` (which
+  the measured receiver ignores) and the standard transient PIN `3939`, and
+  **ends at M4**: no long-term keys, nothing persisted, no pair-verify. It hands
+  back the connection together with the SRP session key, because from here on
+  the receiver only accepts control-channel frames on it. **This is the only
+  mode the session path uses**, and it is confirmed against hardware
+  ([#27](https://github.com/Developer1010x/openplay/issues/27)).
+- `pair_setup(addr, pin)` — first-time pairing with a 4-digit PIN, running
+  M1–M6. Reachable via the `pair_probe` example, not from the session flow.
+- `pair_verify(...)` — subsequent connections, using stored Ed25519 keys. No
+  callers.
 
-Ed25519 signing and ChaCha20-Poly1305 are used in pair-setup M5/M6; X25519 ECDH
-is used separately in `pair_verify`.
+Ed25519 signing and ChaCha20-Poly1305 are used in pair-setup M5/M6, which only
+the PIN flow reaches; X25519 ECDH is used separately in `pair_verify`.
+ChaCha20-Poly1305 also frames the control channel after transient M4.
 
 `hap_pairing.rs` provides SQLite helpers for paired devices (`init_paired_db`,
 `store_paired_device`, `load_paired_device`), but nothing outside the module's

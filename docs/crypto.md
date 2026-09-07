@@ -11,8 +11,9 @@ Original report: issue #8 (closed). Hardware confirmation is tracked in issue #2
 
 | Component | Where | Status |
 |---|---|---|
-| HAP pair-setup (SRP-6a) | `airplay/srp.rs`, `hap_pairing.rs` | **Fixed**, untested against hardware |
-| HAP pair-verify | `airplay/hap_pairing.rs` | Implemented, unreachable until pairing is confirmed |
+| HAP transient pair-setup (SRP-6a) | `airplay/srp.rs`, `hap_pairing.rs` | **Fixed and confirmed against hardware** — M1–M4 against AirTunes/950.7.1 |
+| Encrypted control channel | `airplay/control_channel.rs` | Implemented and confirmed against hardware — an encrypted `GET /info` returns 200. The mirror stream cannot write into it yet, so mirroring is unconfirmed |
+| HAP pair-verify | `airplay/hap_pairing.rs` | Implemented, no callers — the transient flow ends at M4 and keys the control channel directly; pair-verify belongs to the PIN flow, which the session path never uses |
 | FairPlay | `airplay/fairplay.rs` | **Will not be implemented** (decision below), and not wired in — `fp_setup` has no callers |
 | TLS certificates | `openplay-crypto/certs.rs` | Implemented, never constructed anywhere |
 | Signaling TLS config | `openplay-crypto/tls.rs` | Implemented, no callers — fingerprint pinning, which is **not** peer authentication |
@@ -88,20 +89,64 @@ and continuing would derive a session key an attacker can predict.
 The private exponent was reduced from 2048 bits to 256. The old code called
 `random_bigint(256)` against a parameter named `bytes`.
 
-### Caveat: still unconfirmed against hardware
+### Confirmed against hardware
 
-**This has not been confirmed against physical Apple hardware.** The known
-blocker is removed; that is not the same as proven working. No test in this
-repository can substitute for a real receiver.
+Transient pair-setup **has been confirmed against physical Apple hardware**
+([#27](https://github.com/Developer1010x/openplay/issues/27), 2026-08-26): a
+Mac running AirTunes/950.7.1 with AirPlay Receiver set to *Everyone* runs the
+SRP exchange to completion and the probe reports
+`SRP-6a verification successful`.
 
-There is a probe for exactly this:
+Two facts from that run are worth more than the bare result:
+
+- **The receiver's public key is 384 bytes** — 3072 bits. A receiver on a
+  different modulus would not produce a `B` of that width, so the group is now
+  corroborated from the far side of the wire, not only by the self-checks in
+  `srp.rs`.
+- **It did not work as shipped.** Reaching M4 took two fixes, both real bugs
+  rather than environment problems. `POST /pair-setup` needs an
+  `X-Apple-HKP: 4` header, or the receiver answers 400 before reading the body
+  (#41). And the M1 proof must hash `g`'s minimal encoding — the single byte
+  `0x05` — not `PAD(g)`; with padding the receiver answers HAP error `2` at M4
+  (#42, recovered in #43). The neighbouring `k = H(N | PAD(g))` genuinely does
+  need padding, which is how the bug got written.
+
+Transient pairing **ends at M4**. There is no M5/M6, no long-term keys and no
+pair-verify. Running M5 anyway makes the receiver close the connection right
+after an otherwise successful M4 — which reads exactly like a crypto failure
+and is not one. From M4 on the connection is encrypted: HKDF-SHA512 under
+`Control-Salt` with the `Control-Write-Encryption-Key` /
+`Control-Read-Encryption-Key` info strings, then ChaCha20-Poly1305 frames with
+a 2-byte little-endian length as AEAD associated data and a per-direction
+64-bit counter nonce. `control_channel.rs` implements that, and an encrypted
+`GET /info` over it returns `HTTP/1.1 200 OK`.
+
+**A trap when re-testing.** The receiver backs off hard after a failed
+pair-setup, answering HAP error `0x03` with a retry delay. Attempts closer
+together than roughly two minutes return backoff rather than a real answer, and
+backoff looks nothing like an authentication failure. Treat any `0x03` as "no
+result", wait, and re-run.
+
+**What this does not establish: mirroring.** `MirrorStream` writes NAL units
+to a raw `TcpStream`, but every byte after M4 must be wrapped in
+control-channel frames, so `negotiate_with_auth` deliberately stops after
+`POST /stream` with an explicit error rather than emit plaintext into an
+encrypted connection. Making the mirror stream encryption-aware is the
+remaining work. Confirming it end to end also needs a receiver that mirrors
+without FairPlay: a modern Mac gates mirroring behind it (`/fp-setup` answers
+400, RTSP `SETUP` 455, `/stream` 404), and FairPlay stays out of scope by the
+decision below. A software receiver such as `uxplay` is probably the cheapest
+way to get one.
+
+The probes that produced all of this:
 
 ```console
-cargo run -p openplay-airplay --example pair_probe -- <ip>:7000        # transient
+cargo run -p openplay-airplay --example pair_probe -- <ip>:7000        # transient, stops after M4
 cargo run -p openplay-airplay --example pair_probe -- <ip>:7000 1234   # with PIN
+cargo run -p openplay-airplay --example control_probe -- <ip>:7000     # M4, then the encrypted channel
 ```
 
-### What a real attempt actually produced
+### What the first attempt produced
 
 Run against a MacBook Air (`Mac16,12`, AirTunes/950.7.1), `GET /info` succeeded —
 1157-byte plist, features `0x38174FDE4A7FCFD5`, mirroring, video and audio all
@@ -117,14 +162,14 @@ same Apple ID, and it is enforced before any crypto runs. To test the SRP path
 the receiver must be set to "Anyone on the same network" in
 **System Settings → General → AirDrop & Handoff → AirPlay Receiver**.
 
-So the SRP question is still open. The attempt was not wasted, though: a 403 was
-being reported as `Missing state TLV`, because `recv_response` never looked at
-the HTTP status line and an empty body failed TLV8 decoding. That is precisely
-the misleading-diagnostic problem this issue was filed about, one layer up. It
-now reports the status and names the setting to change (`check_http_status` in
-`hap_pairing.rs`, with four tests).
+That attempt was not wasted: a 403 was being reported as `Missing state TLV`,
+because `recv_response` never looked at the HTTP status line and an empty body
+failed TLV8 decoding. That is precisely the misleading-diagnostic problem this
+issue was filed about, one layer up. It now reports the status and names the
+setting to change (`check_http_status` in `hap_pairing.rs`, with four tests).
 
-If you get further against real hardware, please add the result to issue #27
+With the setting changed, the second attempt is the one described above. If you
+get a different result against other hardware, please add it to issue #27
 either way.
 
 ## FairPlay — not fixed

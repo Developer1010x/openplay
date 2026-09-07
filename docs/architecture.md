@@ -38,7 +38,7 @@ no consumer in either binary; the WebRTC path that would use them is unwired.
 |---|---|
 | `openplay-sender` | Binary. egui UI, receiver list, `casting.rs` orchestration |
 | `openplay-receiver` | Binary. egui window showing a static "waiting" page |
-| `openplay-airplay` | AirPlay: HAP pairing, SRP, NTP, mirror stream, TLV8. Also `fairplay.rs`, which has no callers |
+| `openplay-airplay` | AirPlay: HAP pairing, SRP, encrypted control channel, NTP, mirror stream, TLV8. Also `fairplay.rs`, which has no callers |
 | `openplay-miracast` | Miracast/WFD: RTSP, WFD params, Wi-Fi Direct (Linux) |
 | `openplay-pipeline` | GStreamer pipeline construction, encoder probing |
 | `openplay-signaling` | WebSocket signaling client and server. Never constructed |
