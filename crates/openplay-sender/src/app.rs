@@ -304,7 +304,11 @@ impl SenderApp {
 
         match receiver.protocol() {
             Protocol::AirPlay => {
-                if let Some(addr) = receiver.addr() {
+                let Some(addr) = receiver.addr() else {
+                    self.fail_cast("Receiver has no reachable address");
+                    return;
+                };
+                {
                     std::thread::spawn(move || {
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
@@ -343,10 +347,12 @@ impl SenderApp {
                     }
                     #[cfg(not(target_os = "linux"))]
                     {
-                        self.status = "Wi-Fi Direct P2P is only available on Linux".to_string();
-                        self.is_casting = false;
+                        self.fail_cast("Wi-Fi Direct P2P is only available on Linux");
                     }
-                } else if let Some(addr) = receiver.addr() {
+                } else if receiver.addr().is_none() {
+                    self.fail_cast("Receiver has no reachable address");
+                } else {
+                    let addr = receiver.addr().expect("checked just above");
                     std::thread::spawn(move || {
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
@@ -359,11 +365,55 @@ impl SenderApp {
                 }
             }
             Protocol::OpenPlay => {
-                self.status = "OpenPlay WebRTC casting: connecting...".to_string();
-                // TODO: implement OpenPlay WebRTC casting path
-                self.is_casting = false;
+                // Both halves are required. Without the fingerprint the TLS
+                // connection would have nothing to pin, and connecting anyway
+                // would mean trusting whichever host answered.
+                match (receiver.addr(), receiver.fingerprint()) {
+                    (Some(addr), Some(fingerprint)) => {
+                        let fingerprint = fingerprint.to_string();
+                        let display_name = self.config.display_name.clone();
+                        std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap();
+                            rt.block_on(crate::casting::start_openplay_cast(
+                                crate::casting::OpenPlayTarget {
+                                    addr,
+                                    fingerprint,
+                                    display_name,
+                                },
+                                bitrate,
+                                fps,
+                                force_sw,
+                                handle,
+                                stop,
+                                status_cb,
+                            ));
+                        });
+                    }
+                    (None, _) => self.fail_cast("Receiver has no reachable address"),
+                    (_, None) => self.fail_cast(
+                        "Receiver did not publish a certificate fingerprint — cannot connect safely",
+                    ),
+                }
             }
         }
+    }
+
+    /// Abandons a cast that never started.
+    ///
+    /// `start_cast` has already set `is_casting` and paused P2P discovery by
+    /// the time these cases are detected, and the status channel is only read
+    /// for casts that actually spawned — so the UI would otherwise sit on a
+    /// spinner with a live Stop button and a permanently paused Wi-Fi Direct
+    /// scan.
+    fn fail_cast(&mut self, reason: &str) {
+        self.status = reason.to_string();
+        self.is_casting = false;
+        self.stop_handle = None;
+        #[cfg(target_os = "linux")]
+        self.resume_p2p_discovery();
     }
 
     fn stop_cast(&mut self) {
