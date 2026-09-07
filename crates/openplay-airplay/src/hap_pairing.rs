@@ -46,9 +46,19 @@ pub struct PairSetupResult {
     pub client_ltsk: [u8; 32],
     /// Our (client) Ed25519 public key.
     pub client_ltpk: [u8; 32],
+    /// The `iOSDevicePairingID` we sent in M5, under which the accessory has
+    /// filed this pairing.
+    ///
+    /// Pair-verify M3 must send *this* back as `kTLVType_Identifier` and sign
+    /// over it. It used to be generated inside pair-setup and dropped on the
+    /// floor, leaving callers to substitute [`Self::accessory_id`]; the
+    /// accessory then looked for a pairing filed under its own identifier,
+    /// found none, and failed M4 with `kTLVError_Authentication` — which reads
+    /// like a key mismatch rather than a lookup miss.
+    pub client_pairing_id: String,
     /// Accessory's Ed25519 public key.
     pub accessory_ltpk: [u8; 32],
-    /// Accessory device identifier.
+    /// Accessory device identifier (`AccessoryPairingID` from M6).
     pub accessory_id: String,
 }
 
@@ -60,28 +70,64 @@ pub struct PairVerifyResult {
 }
 
 /// Stored pairing information for a device.
+///
+/// Two identifiers, and they are not interchangeable: [`Self::device_id`] names
+/// the *accessory* and is what a pairing is looked up by here, while
+/// [`Self::client_pairing_id`] names *us* and is what pair-verify puts on the
+/// wire. Sending the accessory's identifier in M3 is a pairing that cannot be
+/// found, not a credential that is refused.
 #[derive(Debug, Clone)]
 pub struct PairedDevice {
+    /// The accessory's identifier — the local storage key.
     pub device_id: String,
+    /// The `iOSDevicePairingID` this pairing was established under. Sent as
+    /// `kTLVType_Identifier` in pair-verify M3 and covered by its signature.
+    pub client_pairing_id: String,
     pub accessory_ltpk: [u8; 32],
     pub client_ltsk: [u8; 32],
     pub client_ltpk: [u8; 32],
 }
+
+impl From<PairSetupResult> for PairedDevice {
+    /// Assembles the record pair-verify needs from a completed pair-setup.
+    ///
+    /// Provided so the two identifiers cannot be crossed by hand at the call
+    /// site, which is how the accessory's own identifier ended up in
+    /// pair-verify M3.
+    fn from(result: PairSetupResult) -> Self {
+        Self {
+            device_id: result.accessory_id,
+            client_pairing_id: result.client_pairing_id,
+            accessory_ltpk: result.accessory_ltpk,
+            client_ltsk: result.client_ltsk,
+            client_ltpk: result.client_ltpk,
+        }
+    }
+}
+
+/// `kTLVType_Flags` value marking a pair-setup as transient.
+///
+/// pyatv 0.18.0 `pyatv/auth/hap_tlv8.py` defines `Flags.TransientPairing =
+/// 0x10`, and sends it as a single byte; the HAP specification's
+/// `kPairingFlag_Transient` is the same bit in a uint32.
+///
+/// This was `0x02` — a value that appears in no reference implementation and
+/// corresponds to no defined flag. Measurement against AirTunes/950.7.1 found
+/// the receiver ignores the TLV either way (`0x02`, `0x10`, and omitting
+/// `FLAGS` all return an identical M2), which is why the wrong value survived;
+/// it is not a reason to keep a fabricated constant, and a receiver that *does*
+/// read the flag would have seen a request that is not marked transient at all.
+/// What that receiver required instead was the `X-Apple-HKP` header — see
+/// [`HKP_TRANSIENT`].
+const FLAG_TRANSIENT: u8 = 0x10;
 
 /// Perform transient pair-setup with an AirPlay 2 receiver (no PIN required).
 ///
 /// Transient pairing is used when the receiver allows "Everyone on the Same Network"
 /// access. Uses SRP-6a with PIN "3939" (standard AirPlay transient code).
 ///
-/// The `FLAGS` TLV is sent as `0x02` in a single byte. HAP defines
-/// `kPairingFlag_Transient` as `0x00000010` in a uint32, so this value is
-/// wrong — but measurement against AirTunes/950.7.1 shows the receiver ignores
-/// the TLV entirely: `0x02`, a correct `0x10` uint32, and omitting `FLAGS`
-/// altogether all return an identical M2. It is left as-is rather than changed
-/// on spec-reading alone, since no receiver is known to care. What the
-/// receiver *does* require is the `X-Apple-HKP` header — see `HKP_TRANSIENT`.
-///
-/// Returns a PairSetupResult that can be used for pair-verify.
+/// Returns a [`TransientSession`]: the SRP session key and the connection it
+/// belongs to. There is no long-term identity and so no pair-verify.
 pub async fn pair_setup_transient(addr: SocketAddr) -> anyhow::Result<TransientSession> {
     let (stream, session_key) = pair_setup_srp(addr, "3939", true).await?;
     info!("Transient pair-setup complete — session key established");
@@ -134,7 +180,7 @@ async fn pair_setup_srp(
         tlv8::encode(&[
             tlv8::item_u8(tlv8::tags::STATE, 1),
             tlv8::item_u8(tlv8::tags::METHOD, tlv8::methods::PAIR_SETUP),
-            tlv8::item_u8(tlv8::tags::FLAGS, 0x02), // Transient
+            tlv8::item_u8(tlv8::tags::FLAGS, FLAG_TRANSIENT),
         ])
     } else {
         tlv8::encode(&[
@@ -223,17 +269,20 @@ async fn pair_setup_identity_exchange(
     )?;
 
     // iOSDeviceInfo = iOSDeviceX || iOSDevicePairingID || iOSDeviceLTPK
-    let device_id = uuid::Uuid::new_v4().to_string();
+    let client_pairing_id = uuid::Uuid::new_v4().to_string();
     let mut device_info = Vec::new();
     device_info.extend_from_slice(&device_x);
-    device_info.extend_from_slice(device_id.as_bytes());
+    device_info.extend_from_slice(client_pairing_id.as_bytes());
     device_info.extend_from_slice(client_ltpk.as_bytes());
 
     let device_sig = client_ltsk.sign(&device_info);
 
     // Encrypt sub-TLV with ChaCha20-Poly1305
     let sub_tlv = tlv8::encode(&[
-        tlv8::item(tlv8::tags::IDENTIFIER, device_id.as_bytes().to_vec()),
+        tlv8::item(
+            tlv8::tags::IDENTIFIER,
+            client_pairing_id.as_bytes().to_vec(),
+        ),
         tlv8::item(tlv8::tags::PUBLIC_KEY, client_ltpk.as_bytes().to_vec()),
         tlv8::item(tlv8::tags::SIGNATURE, device_sig.to_bytes().to_vec()),
     ]);
@@ -242,9 +291,8 @@ async fn pair_setup_identity_exchange(
         .try_into()
         .map_err(|_| anyhow::anyhow!("key length"))?;
     let cipher = ChaCha20Poly1305::new(&enc_key_arr.into());
-    let nonce = Nonce::from_slice(b"PS-Msg05\x00\x00\x00\x00");
     let encrypted = cipher
-        .encrypt(nonce, sub_tlv.as_ref())
+        .encrypt(&pairing_nonce(b"PS-Msg05"), sub_tlv.as_ref())
         .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
 
     // M5: Client → Server: State=5, EncryptedData
@@ -263,9 +311,8 @@ async fn pair_setup_identity_exchange(
     let m6_encrypted = tlv8::lookup(&m6, tlv8::tags::ENCRYPTED_DATA)
         .ok_or_else(|| anyhow::anyhow!("M6: missing encrypted data"))?;
 
-    let nonce6 = Nonce::from_slice(b"PS-Msg06\x00\x00\x00\x00");
     let m6_decrypted = cipher
-        .decrypt(nonce6, m6_encrypted)
+        .decrypt(&pairing_nonce(b"PS-Msg06"), m6_encrypted)
         .map_err(|e| anyhow::anyhow!("M6 decryption failed: {e}"))?;
 
     let m6_sub = tlv8::decode(&m6_decrypted)?;
@@ -308,6 +355,7 @@ async fn pair_setup_identity_exchange(
     Ok(PairSetupResult {
         client_ltsk: client_ltsk.to_bytes(),
         client_ltpk: client_ltpk.to_bytes(),
+        client_pairing_id,
         accessory_ltpk: accessory_pk,
         accessory_id: String::from_utf8_lossy(accessory_id).to_string(),
     })
@@ -366,9 +414,8 @@ pub async fn pair_verify(
     let cipher = ChaCha20Poly1305::new(&key_arr.into());
 
     // Decrypt M2 encrypted data
-    let nonce2 = Nonce::from_slice(b"PV-Msg02\x00\x00\x00\x00");
     let m2_plain = cipher
-        .decrypt(nonce2, m2_encrypted)
+        .decrypt(&pairing_nonce(b"PV-Msg02"), m2_encrypted)
         .map_err(|e| anyhow::anyhow!("M2 decryption failed: {e}"))?;
 
     let m2_sub = tlv8::decode(&m2_plain)?;
@@ -393,24 +440,17 @@ pub async fn pair_verify(
 
     debug!("Server signature verified");
 
-    // Build client proof
+    // Build client proof over our *own* pairing identifier.
     let client_ltsk = SigningKey::from_bytes(&paired.client_ltsk);
+    let sub_tlv = verify_m3_sub_tlv(
+        &client_ltsk,
+        &paired.client_pairing_id,
+        client_public.as_bytes(),
+        server_epk_bytes,
+    );
 
-    let mut client_info = Vec::new();
-    client_info.extend_from_slice(client_public.as_bytes());
-    client_info.extend_from_slice(paired.device_id.as_bytes());
-    client_info.extend_from_slice(server_epk_bytes);
-
-    let client_sig = client_ltsk.sign(&client_info);
-
-    let sub_tlv = tlv8::encode(&[
-        tlv8::item(tlv8::tags::IDENTIFIER, paired.device_id.as_bytes().to_vec()),
-        tlv8::item(tlv8::tags::SIGNATURE, client_sig.to_bytes().to_vec()),
-    ]);
-
-    let nonce3 = Nonce::from_slice(b"PV-Msg03\x00\x00\x00\x00");
     let encrypted = cipher
-        .encrypt(nonce3, sub_tlv.as_ref())
+        .encrypt(&pairing_nonce(b"PV-Msg03"), sub_tlv.as_ref())
         .map_err(|e| anyhow::anyhow!("M3 encryption failed: {e}"))?;
 
     // M3: Client → Server: State=3, EncryptedData
@@ -434,6 +474,65 @@ pub async fn pair_verify(
             shared_key: key_arr,
         },
     ))
+}
+
+/// Builds the pair-verify M3 sub-TLV: our pairing identifier plus a signature
+/// over `iOSDeviceInfo`.
+///
+/// ```text
+/// iOSDeviceInfo = iOSDeviceEphemeralPK || iOSDevicePairingID || AccessoryEphemeralPK
+/// ```
+///
+/// `client_pairing_id` is the identifier *we* registered in pair-setup M5, and
+/// is the accessory's lookup key for this pairing. Split out from
+/// [`pair_verify`] so the choice of identifier is testable without a socket —
+/// it was the accessory's own identifier here, which no accessory can resolve.
+///
+/// Matches pyatv 0.18.0 `pyatv/auth/hap_srp.py::SRPAuthHandler.verify1`, which
+/// signs `public_key + self.pairing_id + atv_public_key` and sends
+/// `{Identifier: self.pairing_id, Signature: signature}`.
+fn verify_m3_sub_tlv(
+    client_ltsk: &SigningKey,
+    client_pairing_id: &str,
+    client_epk: &[u8],
+    accessory_epk: &[u8],
+) -> Vec<u8> {
+    let mut client_info = Vec::new();
+    client_info.extend_from_slice(client_epk);
+    client_info.extend_from_slice(client_pairing_id.as_bytes());
+    client_info.extend_from_slice(accessory_epk);
+
+    let client_sig = client_ltsk.sign(&client_info);
+
+    tlv8::encode(&[
+        tlv8::item(
+            tlv8::tags::IDENTIFIER,
+            client_pairing_id.as_bytes().to_vec(),
+        ),
+        tlv8::item(tlv8::tags::SIGNATURE, client_sig.to_bytes().to_vec()),
+    ])
+}
+
+/// Expands one of HAP's 8-byte pairing nonces to the 96 bits
+/// ChaCha20-Poly1305 wants, by padding with four zeros **in front**.
+///
+/// The label occupies the *low* eight bytes. Three independent confirmations:
+///
+/// - pyatv 0.18.0 `pyatv/support/chacha20.py`:
+///   `return b"\x00" * (NONCE_LENGTH - len(nonce)) + nonce`
+/// - HAP-python `pyhap/hap_crypto.py`: `nonce.rjust(12, b"\x00")`
+/// - this crate's own [`crate::control_channel`], which writes its frame
+///   counter to `nonce[4..]` and leaves `nonce[..4]` zero
+///
+/// These nonces used to be written as `b"PS-Msg05\x00\x00\x00\x00"` — the
+/// padding on the wrong end, which is a different nonce and so a different
+/// keystream. Nothing decrypts, and the failure appears at M6/M4 as an
+/// authentication error. Only the PIN flow and pair-verify reach this code,
+/// which is why hardware testing of transient pairing never exercised it.
+fn pairing_nonce(label: &[u8; 8]) -> Nonce {
+    let mut nonce = [0u8; 12];
+    nonce[4..].copy_from_slice(label);
+    *Nonce::from_slice(&nonce)
 }
 
 // --- HTTP helpers for /pair-setup and /pair-verify ---
@@ -613,22 +712,91 @@ fn check_state(items: &[tlv8::Tlv8Item], expected: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check_error(items: &[tlv8::Tlv8Item]) -> anyhow::Result<()> {
-    if let Some(err) = tlv8::lookup(items, tlv8::tags::ERROR) {
-        let code = err.first().copied().unwrap_or(0);
-        let msg = match code {
-            tlv8::errors::UNKNOWN => "Unknown error",
-            tlv8::errors::AUTHENTICATION => "Authentication failed",
-            tlv8::errors::BACKOFF => "Too many attempts, try again later",
-            tlv8::errors::MAX_PEERS => "Maximum peers reached",
-            tlv8::errors::MAX_TRIES => "Maximum tries reached",
-            tlv8::errors::UNAVAILABLE => "Resource unavailable",
-            tlv8::errors::BUSY => "Device busy",
-            _ => "Unknown HAP error",
-        };
-        return Err(anyhow::anyhow!("HAP error {code}: {msg}"));
+/// The accessory answered `kTLVError_BackOff` (0x03).
+///
+/// This is a rate limit, not a credential problem: the accessory is telling us
+/// to come back later, and until the delay elapses *every* attempt fails the
+/// same way no matter what PIN or key is offered. Reported as its own error
+/// type so a caller can tell the two apart rather than logging "authentication
+/// failed" and sending the reader after the crypto — which is how a whole round
+/// of hardware testing was invalidated (issue #27).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HapBackOff {
+    /// Value of `kTLVType_RetryDelay`, when the accessory sent one.
+    pub retry_after: Option<std::time::Duration>,
+}
+
+impl std::fmt::Display for HapBackOff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HAP back-off (kTLVError_BackOff 0x03): the receiver is rate-limiting pairing attempts"
+        )?;
+        match self.retry_after {
+            Some(d) => write!(f, " and asked to retry after {} s", d.as_secs())?,
+            None => write!(f, " and sent no kTLVType_RetryDelay")?,
+        }
+        write!(
+            f,
+            ". This is a retry-after, not an authentication failure — the PIN and keys are not implicated"
+        )
     }
-    Ok(())
+}
+
+impl std::error::Error for HapBackOff {}
+
+/// Reads `kTLVType_RetryDelay` (0x08).
+///
+/// HAP integer TLVs are little-endian and only as wide as they need to be, so
+/// the delay can arrive as 1, 2, 4 or 8 bytes. pyatv 0.18.0
+/// `pyatv/auth/hap_tlv8.py::stringify` reads the same TLV as
+/// `int.from_bytes(value, byteorder="little")` and renders it as seconds.
+fn retry_delay_secs(items: &[tlv8::Tlv8Item]) -> Option<u64> {
+    let raw = tlv8::lookup(items, tlv8::tags::RETRY_DELAY)?;
+    if raw.is_empty() || raw.len() > 8 {
+        return None;
+    }
+    let mut buf = [0u8; 8];
+    buf[..raw.len()].copy_from_slice(raw);
+    Some(u64::from_le_bytes(buf))
+}
+
+/// Turns a `kTLVType_Error` in a received message into an error, if it is one.
+///
+/// An ERROR TLV that is absent, empty, or carries `kTLVError_None` is *not* a
+/// failure. This used to default a missing value to 0 and then report it, so a
+/// zero-length ERROR TLV — which some accessories send alongside a perfectly
+/// good message — became "HAP error 0: Unknown HAP error".
+fn check_error(items: &[tlv8::Tlv8Item]) -> anyhow::Result<()> {
+    let Some(err) = tlv8::lookup(items, tlv8::tags::ERROR) else {
+        return Ok(());
+    };
+    // A zero-length ERROR TLV carries no code; treat it as no error rather than
+    // inventing one.
+    let Some(code) = err.first().copied() else {
+        return Ok(());
+    };
+    if code == tlv8::errors::NONE {
+        return Ok(());
+    }
+
+    if code == tlv8::errors::BACKOFF {
+        return Err(HapBackOff {
+            retry_after: retry_delay_secs(items).map(std::time::Duration::from_secs),
+        }
+        .into());
+    }
+
+    let msg = match code {
+        tlv8::errors::UNKNOWN => "Unknown error",
+        tlv8::errors::AUTHENTICATION => "Authentication failed",
+        tlv8::errors::MAX_PEERS => "Maximum peers reached",
+        tlv8::errors::MAX_TRIES => "Maximum tries reached",
+        tlv8::errors::UNAVAILABLE => "Resource unavailable",
+        tlv8::errors::BUSY => "Device busy",
+        _ => "Unknown HAP error",
+    };
+    Err(anyhow::anyhow!("HAP error {code}: {msg}"))
 }
 
 // --- Crypto helpers ---
@@ -644,11 +812,16 @@ fn hkdf_derive(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> anyhow::Resu
 // --- Paired device storage ---
 
 /// Initialize the paired devices SQLite database.
+///
+/// `client_pairing_id` is stored alongside the keys because pair-verify cannot
+/// be performed without it; a row that has the keys but not the identifier
+/// describes a pairing the accessory will not find.
 pub fn init_paired_db(db_path: &std::path::Path) -> anyhow::Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(db_path)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS paired_devices (
             device_id TEXT PRIMARY KEY,
+            client_pairing_id TEXT NOT NULL,
             accessory_ltpk BLOB NOT NULL,
             client_ltsk BLOB NOT NULL,
             client_ltpk BLOB NOT NULL,
@@ -664,10 +837,12 @@ pub fn store_paired_device(
     device: &PairedDevice,
 ) -> anyhow::Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO paired_devices (device_id, accessory_ltpk, client_ltsk, client_ltpk)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR REPLACE INTO paired_devices
+             (device_id, client_pairing_id, accessory_ltpk, client_ltsk, client_ltpk)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![
             device.device_id,
+            device.client_pairing_id,
             device.accessory_ltpk.as_slice(),
             device.client_ltsk.as_slice(),
             device.client_ltpk.as_slice(),
@@ -682,18 +857,21 @@ pub fn load_paired_device(
     device_id: &str,
 ) -> anyhow::Result<Option<PairedDevice>> {
     let mut stmt = conn.prepare(
-        "SELECT device_id, accessory_ltpk, client_ltsk, client_ltpk FROM paired_devices WHERE device_id = ?1"
+        "SELECT device_id, client_pairing_id, accessory_ltpk, client_ltsk, client_ltpk
+         FROM paired_devices WHERE device_id = ?1",
     )?;
 
     let mut rows = stmt.query(rusqlite::params![device_id])?;
     if let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
-        let ltpk: Vec<u8> = row.get(1)?;
-        let ltsk: Vec<u8> = row.get(2)?;
-        let ltpk_client: Vec<u8> = row.get(3)?;
+        let client_pairing_id: String = row.get(1)?;
+        let ltpk: Vec<u8> = row.get(2)?;
+        let ltsk: Vec<u8> = row.get(3)?;
+        let ltpk_client: Vec<u8> = row.get(4)?;
 
         Ok(Some(PairedDevice {
             device_id: id,
+            client_pairing_id,
             accessory_ltpk: ltpk
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("Invalid LTPK"))?,
@@ -774,6 +952,7 @@ mod tests {
 
         let device = PairedDevice {
             device_id: "test-device-001".into(),
+            client_pairing_id: "0f1e2d3c-client".into(),
             accessory_ltpk: [1u8; 32],
             client_ltsk: [2u8; 32],
             client_ltpk: [3u8; 32],
@@ -786,8 +965,203 @@ mod tests {
         assert_eq!(loaded.device_id, "test-device-001");
         assert_eq!(loaded.accessory_ltpk, [1u8; 32]);
         assert_eq!(loaded.client_ltsk, [2u8; 32]);
+        // Without this, pair-verify has nothing to send as kTLVType_Identifier
+        // and falls back to the accessory's own id, which resolves to no pairing.
+        assert_eq!(loaded.client_pairing_id, "0f1e2d3c-client");
 
         let ids = list_paired_devices(&conn).unwrap();
         assert_eq!(ids, vec!["test-device-001"]);
+    }
+
+    /// The four HAP pairing nonces, byte for byte.
+    ///
+    /// Reference: pyatv 0.18.0 `pyatv/support/chacha20.py`, which pads a short
+    /// nonce as `b"\x00" * (NONCE_LENGTH - len(nonce)) + nonce` and calls
+    /// `encrypt(..., nonce="PS-Msg05".encode())` in `auth/hap_srp.py`.
+    /// HAP-python's `pyhap/hap_crypto.py` does `nonce.rjust(12, b"\x00")`.
+    #[test]
+    fn pairing_nonces_pad_in_front() {
+        assert_eq!(
+            pairing_nonce(b"PS-Msg05").as_slice(),
+            b"\x00\x00\x00\x00PS-Msg05"
+        );
+        assert_eq!(
+            pairing_nonce(b"PS-Msg06").as_slice(),
+            b"\x00\x00\x00\x00PS-Msg06"
+        );
+        assert_eq!(
+            pairing_nonce(b"PV-Msg02").as_slice(),
+            b"\x00\x00\x00\x00PV-Msg02"
+        );
+        assert_eq!(
+            pairing_nonce(b"PV-Msg03").as_slice(),
+            b"\x00\x00\x00\x00PV-Msg03"
+        );
+
+        // Stated the other way round, because this is the shape the bug had:
+        // trailing padding is a different nonce and therefore a different
+        // keystream, and nothing on the far side decrypts.
+        let n = pairing_nonce(b"PS-Msg05");
+        assert_eq!(&n.as_slice()[..4], &[0, 0, 0, 0], "padding leads");
+        assert_ne!(n.as_slice(), b"PS-Msg05\x00\x00\x00\x00");
+
+        // Same layout the control channel already uses for its frame counter,
+        // which is the in-repo contradiction that flagged this.
+        assert_eq!(n.len(), 12);
+    }
+
+    #[test]
+    fn a_pair_setup_result_keeps_the_two_identifiers_apart() {
+        let paired: PairedDevice = PairSetupResult {
+            client_ltsk: [2u8; 32],
+            client_ltpk: [3u8; 32],
+            client_pairing_id: "ours".into(),
+            accessory_ltpk: [1u8; 32],
+            accessory_id: "theirs".into(),
+        }
+        .into();
+
+        assert_eq!(paired.client_pairing_id, "ours", "M3 sends our identifier");
+        assert_eq!(
+            paired.device_id, "theirs",
+            "we file the pairing under theirs"
+        );
+    }
+
+    /// Pair-verify M3 must name *us*, not the accessory.
+    #[test]
+    fn verify_m3_sends_the_client_pairing_id() {
+        let client_ltsk = SigningKey::from_bytes(&[9u8; 32]);
+        let client_epk = [0xAAu8; 32];
+        let accessory_epk = [0xBBu8; 32];
+
+        let sub_tlv = verify_m3_sub_tlv(
+            &client_ltsk,
+            "client-pairing-id",
+            &client_epk,
+            &accessory_epk,
+        );
+        let items = tlv8::decode(&sub_tlv).unwrap();
+
+        let id = tlv8::lookup(&items, tlv8::tags::IDENTIFIER).unwrap();
+        assert_eq!(
+            id, b"client-pairing-id",
+            "M3 carries iOSDevicePairingID; sending AccessoryPairingID looks up a \
+             pairing that cannot exist"
+        );
+
+        // The signature covers the same identifier, so substituting one later
+        // would not help either.
+        let sig: [u8; 64] = tlv8::lookup(&items, tlv8::tags::SIGNATURE)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let mut expected_info = Vec::new();
+        expected_info.extend_from_slice(&client_epk);
+        expected_info.extend_from_slice(b"client-pairing-id");
+        expected_info.extend_from_slice(&accessory_epk);
+        client_ltsk
+            .verifying_key()
+            .verify(&expected_info, &ed25519_dalek::Signature::from_bytes(&sig))
+            .expect("signature must cover iOSDeviceEPK || iOSDevicePairingID || AccessoryEPK");
+    }
+
+    #[test]
+    fn back_off_is_reported_as_a_delay_not_an_auth_failure() {
+        let items = vec![
+            tlv8::item_u8(tlv8::tags::STATE, 4),
+            tlv8::item_u8(tlv8::tags::ERROR, tlv8::errors::BACKOFF),
+            tlv8::item(tlv8::tags::RETRY_DELAY, vec![30]),
+        ];
+        let err = check_error(&items).expect_err("back-off must be an error");
+
+        let back_off = err
+            .downcast_ref::<HapBackOff>()
+            .expect("callers must be able to tell a back-off from a bad PIN");
+        assert_eq!(
+            back_off.retry_after,
+            Some(std::time::Duration::from_secs(30))
+        );
+
+        let msg = err.to_string();
+        assert!(msg.contains("30"), "the delay must be named: {msg}");
+        assert!(
+            !msg.to_lowercase().contains("authentication failed"),
+            "must not read as a credential problem: {msg}"
+        );
+    }
+
+    #[test]
+    fn retry_delay_is_a_little_endian_integer_of_any_width() {
+        let ms = |bytes: Vec<u8>| {
+            retry_delay_secs(&[tlv8::item(tlv8::tags::RETRY_DELAY, bytes)]).unwrap()
+        };
+        assert_eq!(ms(vec![30]), 30);
+        assert_eq!(ms(vec![0x2C, 0x01]), 300);
+        assert_eq!(ms(vec![0x10, 0x0E, 0x00, 0x00]), 3600);
+
+        // Absent, empty, and over-wide values are "no delay stated", not zero.
+        assert_eq!(retry_delay_secs(&[]), None);
+        assert_eq!(
+            retry_delay_secs(&[tlv8::item(tlv8::tags::RETRY_DELAY, vec![])]),
+            None
+        );
+    }
+
+    #[test]
+    fn back_off_without_a_delay_still_says_what_happened() {
+        let items = vec![tlv8::item_u8(tlv8::tags::ERROR, tlv8::errors::BACKOFF)];
+        let err = check_error(&items).expect_err("back-off must be an error");
+        assert_eq!(
+            err.downcast_ref::<HapBackOff>().unwrap().retry_after,
+            None,
+            "no RetryDelay TLV means no delay is known — not a delay of zero"
+        );
+        assert!(err.to_string().contains("rate-limiting"));
+    }
+
+    #[test]
+    fn an_empty_or_none_error_tlv_is_success() {
+        // Zero-length ERROR TLV: no code was sent, so nothing failed. This used
+        // to be reported as "HAP error 0: Unknown HAP error".
+        assert!(check_error(&[tlv8::item(tlv8::tags::ERROR, vec![])]).is_ok());
+        // kTLVError_None is an explicit success.
+        assert!(check_error(&[tlv8::item_u8(tlv8::tags::ERROR, tlv8::errors::NONE)]).is_ok());
+        // No ERROR TLV at all.
+        assert!(check_error(&[tlv8::item_u8(tlv8::tags::STATE, 2)]).is_ok());
+    }
+
+    #[test]
+    fn real_error_codes_are_still_errors() {
+        let err = check_error(&[tlv8::item_u8(
+            tlv8::tags::ERROR,
+            tlv8::errors::AUTHENTICATION,
+        )])
+        .expect_err("0x02 is a real failure");
+        assert!(err.to_string().contains("Authentication failed"));
+        assert!(
+            err.downcast_ref::<HapBackOff>().is_none(),
+            "an auth failure is not a back-off"
+        );
+
+        assert!(check_error(&[tlv8::item_u8(tlv8::tags::ERROR, 0x7F)]).is_err());
+    }
+
+    /// Reference: pyatv 0.18.0 `pyatv/auth/hap_tlv8.py` —
+    /// `class Flags(IntEnum): TransientPairing = 0x10`.
+    ///
+    /// The previous value, `0x02`, is not a defined pairing flag in any
+    /// reference implementation.
+    #[test]
+    fn transient_flag_matches_pyatv() {
+        assert_eq!(FLAG_TRANSIENT, 0x10);
+
+        let m1 = tlv8::encode(&[
+            tlv8::item_u8(tlv8::tags::STATE, 1),
+            tlv8::item_u8(tlv8::tags::METHOD, tlv8::methods::PAIR_SETUP),
+            tlv8::item_u8(tlv8::tags::FLAGS, FLAG_TRANSIENT),
+        ]);
+        // Single byte, as pyatv writes it — tag 0x13, length 1, value 0x10.
+        assert_eq!(&m1[m1.len() - 3..], &[0x13, 0x01, 0x10]);
     }
 }

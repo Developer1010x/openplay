@@ -161,10 +161,11 @@ async fn post_stream(
         .map_err(|e| AirPlayError::Http(format!("Failed to send POST /stream body: {e}")))?;
 
     // Read response status
-    let (status, _body) = read_http_response(stream).await?;
-    if !status.contains("200") {
+    let (headers, _body) = read_http_response(stream).await?;
+    if !status_is_success(&headers) {
+        let status_line = headers.lines().next().unwrap_or("<no status line>");
         return Err(AirPlayError::Negotiation(format!(
-            "POST /stream failed: {status}"
+            "POST /stream failed: {status_line}"
         )));
     }
 
@@ -227,6 +228,29 @@ async fn read_http_response(stream: &mut TcpStream) -> Result<(String, Vec<u8>),
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+/// Whether a response's **status line** reports success.
+///
+/// `headers` is the whole header block, so the status has to be read off the
+/// first line and nowhere else. This was `headers.contains("200")`, which every
+/// one of `Content-Length: 1200`, `Server: AirTunes/200.20` and a `Date`
+/// containing "200" satisfies — so a 500 or a 403 was accepted as a working
+/// mirror session, and the failure surfaced later as an unexplained stall.
+///
+/// `hap_pairing::check_http_status` already parsed the status line correctly;
+/// this is the same parse, kept separate only because the two report failures
+/// differently.
+///
+/// An unparseable first line is not success: if the status cannot be read there
+/// is nothing to justify sending video down the connection.
+fn status_is_success(headers: &str) -> bool {
+    headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|code| (200..300).contains(&code))
 }
 
 fn parse_content_length(headers: &str) -> Option<usize> {
@@ -371,4 +395,64 @@ pub async fn post_stream_on(
     session_id: &str,
 ) -> Result<(), AirPlayError> {
     post_stream(stream, width, height, fps, session_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real 500, with three separate headers that contain "200".
+    const FIVE_HUNDRED: &str = "HTTP/1.1 500 Internal Server Error\r\n\
+         Server: AirTunes/200.20\r\n\
+         Date: Mon, 06 Jan 2003 12:00:14 GMT\r\n\
+         Content-Length: 1200";
+
+    #[test]
+    fn a_failure_status_is_rejected_however_the_headers_read() {
+        assert!(
+            !status_is_success(FIVE_HUNDRED),
+            "the status line says 500; only the status line counts"
+        );
+
+        // The check this replaced. Kept as an assertion rather than a comment
+        // so the reason for the rewrite cannot quietly stop being true.
+        assert!(
+            FIVE_HUNDRED.contains("200"),
+            "substring matching accepted this response as success"
+        );
+
+        assert!(!status_is_success(
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0"
+        ));
+        assert!(!status_is_success(
+            "HTTP/1.1 501 Not Implemented\r\nContent-Length: 200"
+        ));
+    }
+
+    #[test]
+    fn a_success_status_is_accepted() {
+        assert!(status_is_success(
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n"
+        ));
+        assert!(status_is_success("HTTP/1.1 204 No Content"));
+        assert!(status_is_success("RTSP/1.0 200 OK\r\nCSeq: 1"));
+    }
+
+    #[test]
+    fn an_unreadable_status_line_is_not_success() {
+        assert!(!status_is_success(""));
+        assert!(!status_is_success("garbage\r\nContent-Length: 200"));
+    }
+
+    /// `session.rs` decides whether to retry with HAP pairing by looking for
+    /// "501"/"403" in this error text, so the status line has to survive into it.
+    #[test]
+    fn the_rejection_message_keeps_the_status_code() {
+        let status_line = FIVE_HUNDRED.lines().next().unwrap();
+        assert!(status_line.contains("500"));
+        assert!(
+            !status_line.contains("1200"),
+            "the Content-Length must not reach the auth-fallback match"
+        );
+    }
 }
