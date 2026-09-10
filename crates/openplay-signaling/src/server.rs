@@ -52,6 +52,20 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectionId(u64);
 
+impl ConnectionId {
+    /// Builds an id with a chosen value.
+    ///
+    /// Ids are otherwise handed out by the accept loop, which means a test in a
+    /// dependent crate cannot tell two connections apart without opening two
+    /// real sockets. Session-ownership rules are exactly what such a test needs
+    /// to cover, so the constructor is exposed rather than leaving them
+    /// untestable. Not part of the supported API.
+    #[doc(hidden)]
+    pub fn for_test(value: u64) -> Self {
+        Self(value)
+    }
+}
+
 impl std::fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "conn-{}", self.0)
@@ -97,6 +111,18 @@ impl ConnectionHandle {
     /// Whether the peer is still connected.
     pub fn is_connected(&self) -> bool {
         !self.tx.is_closed()
+    }
+
+    /// Builds a handle backed by a plain channel instead of a socket, together
+    /// with the receiving end so a test can assert what was replied.
+    ///
+    /// Dropping the returned receiver makes the handle report itself
+    /// disconnected, which is how a test simulates a sender going away. Not
+    /// part of the supported API.
+    #[doc(hidden)]
+    pub fn for_test(id: ConnectionId, capacity: usize) -> (Self, mpsc::Receiver<SignalingMessage>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        (Self { id, tx }, rx)
     }
 }
 

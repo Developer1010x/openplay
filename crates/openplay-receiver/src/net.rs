@@ -158,13 +158,14 @@ pub fn start(config: &AppConfig) -> Result<NetHandle> {
     // A receiver that cannot advertise is degraded, not broken: a sender given
     // the address by hand still works. Say so instead of showing a hard error
     // over a server that is about to start listening.
-    if advertiser.is_none() {
+    let undiscoverable = advertiser.is_none().then(|| {
+        "Not discoverable on this network — senders must be pointed here by address".to_string()
+    });
+    if let Some(reason) = &undiscoverable {
         set_status(
             &status,
             Status::Failed {
-                reason:
-                    "Not discoverable on this network — senders must be pointed here by address"
-                        .to_string(),
+                reason: reason.clone(),
             },
         );
     }
@@ -218,7 +219,7 @@ pub fn start(config: &AppConfig) -> Result<NetHandle> {
     let loop_status = Arc::clone(&status);
     let loop_frame = Arc::clone(&frame);
     runtime.spawn(async move {
-        SessionLoop::new(loop_config, loop_status, loop_frame)
+        SessionLoop::new(loop_config, loop_status, loop_frame, undiscoverable)
             .run(incoming_rx, decisions_rx)
             .await;
     });
@@ -281,16 +282,26 @@ struct SessionLoop {
     frame: SharedFrame,
     pending: HashMap<ConnectionId, Pending>,
     active: Option<Active>,
+    /// Why this receiver is not discoverable, if it is not. Startup reports it
+    /// once; without keeping it, the end of the first session would repaint the
+    /// window as `Waiting` and claim a discoverability the receiver never had.
+    undiscoverable: Option<String>,
 }
 
 impl SessionLoop {
-    fn new(config: AppConfig, status: SharedStatus, frame: SharedFrame) -> Self {
+    fn new(
+        config: AppConfig,
+        status: SharedStatus,
+        frame: SharedFrame,
+        undiscoverable: Option<String>,
+    ) -> Self {
         Self {
             config,
             status,
             frame,
             pending: HashMap::new(),
             active: None,
+            undiscoverable,
         }
     }
 
@@ -444,6 +455,31 @@ impl SessionLoop {
         if let Some(active) = &self.active {
             if active.connection != connection {
                 warn!(sender = %display_name, "Rejecting session: already casting");
+                reply.send(SignalingMessage::SessionReject {
+                    reason: RejectReason::Busy,
+                });
+                return;
+            }
+        }
+
+        // A prompt already on screen is just as exclusive as an active session.
+        //
+        // The consent prompt is the entire security model, and it names the
+        // sender because that name is the only thing the person deciding has to
+        // go on. Accepting a second request while one is displayed would
+        // overwrite both the name and the connection id the window is holding,
+        // so a sender arriving in the moment between reading the prompt and
+        // pressing Allow would inherit the approval — deliberately, if it keeps
+        // sending requests until a click lands. Refuse instead; the prompt is
+        // dropped within one liveness tick if its sender goes away, so this
+        // cannot wedge the receiver.
+        if let Some((pending_id, existing)) = self.pending.iter().next() {
+            if *pending_id != connection {
+                warn!(
+                    sender = %display_name,
+                    waiting_on = %existing.display_name,
+                    "Rejecting session: a consent prompt is already on screen"
+                );
                 reply.send(SignalingMessage::SessionReject {
                     reason: RejectReason::Busy,
                 });
@@ -712,7 +748,13 @@ impl SessionLoop {
 
     /// Returns to `Waiting`, unless startup left a failure worth keeping.
     fn reset_status(&self) {
-        set_status(&self.status, Status::Waiting);
+        let next = match &self.undiscoverable {
+            Some(reason) => Status::Failed {
+                reason: reason.clone(),
+            },
+            None => Status::Waiting,
+        };
+        set_status(&self.status, next);
     }
 }
 
@@ -747,5 +789,150 @@ fn set_status(status: &SharedStatus, next: Status) {
         // A poisoned lock means a task panicked mid-update. The status is
         // cosmetic, so drop the update rather than take the window down.
         Err(e) => warn!("Status lock poisoned, dropping update: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+
+    /// A `SessionLoop` with no advertiser failure, plus the pieces a test needs
+    /// to drive it: `handle_message` is synchronous, so a session can be walked
+    /// through without a runtime or a socket.
+    fn loop_under_test() -> SessionLoop {
+        SessionLoop::new(
+            AppConfig::default(),
+            Arc::new(Mutex::new(Status::Waiting)),
+            Arc::new(Mutex::new(FrameSlot::default())),
+            None,
+        )
+    }
+
+    fn request(display_name: &str) -> SignalingMessage {
+        SignalingMessage::SessionRequest {
+            display_name: display_name.to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: Capabilities::default(),
+            sender_id: String::new(),
+        }
+    }
+
+    fn incoming(
+        message: SignalingMessage,
+        reply: &ConnectionHandle,
+        connection: ConnectionId,
+    ) -> IncomingMessage {
+        IncomingMessage {
+            message,
+            reply: reply.clone(),
+            connection,
+            peer: "192.0.2.1:5000".parse().unwrap(),
+        }
+    }
+
+    fn status_of(session: &SessionLoop) -> Status {
+        session.status.lock().unwrap().clone()
+    }
+
+    /// The regression this guards: the second request used to overwrite the
+    /// status cell, so the prompt the user was reading silently became a
+    /// different sender's — and the Allow they were about to press would have
+    /// approved that one instead.
+    #[test]
+    fn a_second_sender_cannot_replace_the_prompt_on_screen() {
+        let mut session = loop_under_test();
+        let (webrtc_tx, _webrtc_rx) = mpsc::unbounded_channel();
+
+        let first_id = ConnectionId::for_test(1);
+        let (first, _first_rx) = ConnectionHandle::for_test(first_id, 8);
+        session.handle_message(incoming(request("Alice"), &first, first_id), &webrtc_tx);
+
+        let second_id = ConnectionId::for_test(2);
+        let (second, mut second_rx) = ConnectionHandle::for_test(second_id, 8);
+        session.handle_message(incoming(request("Mallory"), &second, second_id), &webrtc_tx);
+
+        assert_eq!(
+            status_of(&session),
+            Status::PendingConsent {
+                sender_name: "Alice".to_string(),
+                connection: first_id,
+            },
+            "the prompt must still name the sender the user is looking at"
+        );
+        assert!(matches!(
+            second_rx.try_recv(),
+            Ok(SignalingMessage::SessionReject {
+                reason: RejectReason::Busy
+            })
+        ));
+        assert!(!session.pending.contains_key(&second_id));
+    }
+
+    /// Refusing the second sender must not refuse the first one's own retry,
+    /// which is what a sender does if its request is resent.
+    #[test]
+    fn the_pending_sender_may_repeat_its_own_request() {
+        let mut session = loop_under_test();
+        let (webrtc_tx, _webrtc_rx) = mpsc::unbounded_channel();
+
+        let id = ConnectionId::for_test(1);
+        let (reply, mut rx) = ConnectionHandle::for_test(id, 8);
+        session.handle_message(incoming(request("Alice"), &reply, id), &webrtc_tx);
+        session.handle_message(incoming(request("Alice"), &reply, id), &webrtc_tx);
+
+        assert!(rx.try_recv().is_err(), "no rejection should have been sent");
+        assert_eq!(
+            status_of(&session),
+            Status::PendingConsent {
+                sender_name: "Alice".to_string(),
+                connection: id,
+            }
+        );
+    }
+
+    /// A prompt whose sender vanished must not lock the receiver out. The
+    /// liveness tick prunes it, and the next sender is prompted for normally.
+    #[test]
+    fn a_dead_prompt_does_not_wedge_the_receiver() {
+        let mut session = loop_under_test();
+        let (webrtc_tx, _webrtc_rx) = mpsc::unbounded_channel();
+
+        let first_id = ConnectionId::for_test(1);
+        let (first, first_rx) = ConnectionHandle::for_test(first_id, 8);
+        session.handle_message(incoming(request("Alice"), &first, first_id), &webrtc_tx);
+
+        drop(first_rx);
+        session.drop_dead_connections();
+        assert_eq!(status_of(&session), Status::Waiting);
+
+        let second_id = ConnectionId::for_test(2);
+        let (second, mut second_rx) = ConnectionHandle::for_test(second_id, 8);
+        session.handle_message(incoming(request("Bob"), &second, second_id), &webrtc_tx);
+
+        assert!(second_rx.try_recv().is_err(), "Bob should not be rejected");
+        assert_eq!(
+            status_of(&session),
+            Status::PendingConsent {
+                sender_name: "Bob".to_string(),
+                connection: second_id,
+            }
+        );
+    }
+
+    /// Ending a session on a receiver that never managed to advertise must not
+    /// repaint the window as `Waiting`, which reads as "discoverable".
+    #[test]
+    fn an_undiscoverable_receiver_keeps_saying_so_between_sessions() {
+        let reason = "Not discoverable on this network".to_string();
+        let session = SessionLoop::new(
+            AppConfig::default(),
+            Arc::new(Mutex::new(Status::Waiting)),
+            Arc::new(Mutex::new(FrameSlot::default())),
+            Some(reason.clone()),
+        );
+
+        session.reset_status();
+
+        assert_eq!(status_of(&session), Status::Failed { reason });
     }
 }
