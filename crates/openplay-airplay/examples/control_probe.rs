@@ -42,7 +42,13 @@ async fn main() -> anyhow::Result<()> {
     let probes: Vec<(&str, Vec<u8>)> = vec![
         (
             "POST /stream",
-            http_session::build_stream_request(1920, 1080, 30, "probe-session")?,
+            http_session::build_stream_request(
+                1920,
+                1080,
+                30,
+                "probe-session",
+                http_session::DEFAULT_DEVICE_NAME,
+            )?,
         ),
         (
             "POST /fp-setup",

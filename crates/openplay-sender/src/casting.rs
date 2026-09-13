@@ -52,15 +52,32 @@ impl CastStopHandle {
 
 // ─── AirPlay ──────────────────────────────────────────────────────────────────
 
+/// The parts of the configuration an AirPlay cast needs, built from
+/// `AppConfig` by the UI so the cast entry point does not grow a parameter
+/// every time the config gains a field.
+#[derive(Debug, Clone)]
+pub struct CastSettings {
+    pub bitrate_kbps: u32,
+    pub framerate: u32,
+    pub force_sw_encode: bool,
+    /// Shown by the receiver for this sender (`X-Apple-Device-Name`).
+    pub display_name: String,
+}
+
 pub async fn start_airplay_cast(
     receiver_addr: SocketAddr,
-    bitrate_kbps: u32,
-    framerate: u32,
-    force_sw_encode: bool,
+    settings: CastSettings,
     tokio_handle: TokioHandle,
     stop_handle: CastStopHandle,
     status_callback: impl Fn(&str) + 'static,
 ) {
+    let CastSettings {
+        bitrate_kbps,
+        framerate,
+        force_sw_encode,
+        display_name,
+    } = settings;
+
     status_callback("Starting screen capture...");
 
     let capture = match CaptureSession::start().await {
@@ -85,10 +102,9 @@ pub async fn start_airplay_cast(
             run_airplay_pipeline(
                 receiver_addr,
                 capture_config,
-                width,
-                height,
                 bitrate_kbps,
                 force_sw_encode,
+                display_name,
                 stop_flag,
             )
             .await
@@ -260,10 +276,9 @@ fn select_encoder(force_sw_encode: bool) -> EncoderType {
 async fn run_airplay_pipeline(
     receiver_addr: SocketAddr,
     capture_config: CaptureConfig,
-    width: u32,
-    height: u32,
     bitrate_kbps: u32,
     force_sw_encode: bool,
+    display_name: String,
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let encoder_type = select_encoder(force_sw_encode);
@@ -293,9 +308,13 @@ async fn run_airplay_pipeline(
             .build(),
     );
 
+    let (width, height, framerate) = (
+        capture_config.width,
+        capture_config.height,
+        capture_config.framerate,
+    );
     info!(%receiver_addr, width, height, "Starting AirPlay session");
-    let framerate = capture_config.framerate;
-    let mut session = AirPlaySession::start(receiver_addr, width, height, framerate)
+    let mut session = AirPlaySession::start(receiver_addr, width, height, framerate, &display_name)
         .await
         .map_err(|e| anyhow::anyhow!("AirPlay session start failed: {e}"))?;
 

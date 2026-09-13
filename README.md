@@ -264,7 +264,7 @@ receiver declined.
 ```
 openplay-sender
   --config <path>   Use a custom config file
-  --name <name>     Override the display name shown in the window
+  --name <name>     Override the display name shown in the window and sent to AirPlay receivers
 
 openplay-receiver
   --config <path>   Use a custom config file
