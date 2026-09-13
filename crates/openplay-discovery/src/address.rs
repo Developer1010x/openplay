@@ -132,4 +132,34 @@ mod tests {
         sort_by_connectability(&mut one);
         assert_eq!(one, ips(&["fe80::1"]));
     }
+
+    /// The ordering that made two-machine casting fail, recorded as a fact
+    /// rather than a preference.
+    ///
+    /// This machine advertised exactly this set: a Docker bridge, a Compose
+    /// bridge, and the real wireless address. All three are routable IPv4, so
+    /// `rank` is 0 for each and the tie breaks on the numeric value — which
+    /// puts `172.17.0.1` first and the only externally reachable address last.
+    ///
+    /// Ranking cannot fix this. A sender's own `docker0` is `172.17.0.1/16`,
+    /// so "prefer the same subnet" prefers the wrong address too, and
+    /// "prefer 192.168/16" is wrong on every 10.x corporate LAN. The fix is
+    /// that the caller tries all of them and lets the pinned certificate
+    /// decide, so this test asserts the ordering it must cope with rather
+    /// than an ordering that would be safe to dial blindly.
+    #[test]
+    fn bridge_addresses_still_sort_ahead_of_the_real_lan_address() {
+        let mut a = ips(&["192.168.1.10", "172.17.0.1", "172.18.0.1"]);
+        sort_by_connectability(&mut a);
+        assert_eq!(
+            a,
+            ips(&["172.17.0.1", "172.18.0.1", "192.168.1.10"]),
+            "if this ever changes, the caller may no longer need to try every address"
+        );
+        assert_ne!(
+            a[0],
+            "192.168.1.10".parse::<IpAddr>().unwrap(),
+            "sorting alone does not make the first address the dialable one"
+        );
+    }
 }

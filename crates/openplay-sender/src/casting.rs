@@ -598,7 +598,14 @@ fn find_nalu_starts(data: &[u8]) -> Vec<usize> {
 /// other host that answers on that address.
 #[derive(Debug, Clone)]
 pub struct OpenPlayTarget {
-    pub addr: SocketAddr,
+    /// Every address the receiver advertised, most-connectable first.
+    ///
+    /// Not a single address: mDNS reports every interface a receiver has, and
+    /// on a machine running Docker the bridge addresses sort ahead of the real
+    /// one. Dialling only the first reaches the sender's own Docker bridge, so
+    /// these are tried in turn until the pinned certificate proves one of them
+    /// is the receiver.
+    pub addrs: Vec<SocketAddr>,
     pub fingerprint: String,
     /// Shown in the approval prompt on the receiver's screen.
     ///
@@ -677,6 +684,70 @@ pub async fn start_openplay_cast(
     }
 }
 
+/// Connects to the first advertised address that proves it is the receiver.
+///
+/// mDNS reports every address a receiver has, and a machine running Docker
+/// advertises `172.17.0.1` and `172.18.0.1` alongside the address that is
+/// actually reachable from another host. Those sort first, because
+/// `sort_by_connectability` ranks all routable IPv4 alike and breaks ties on
+/// the numeric value — so a sender that dials only the first address connects
+/// to its *own* Docker bridge and reports the receiver as unreachable.
+///
+/// Trying each address in turn is safe precisely because `tls_config` pins the
+/// receiver's certificate fingerprint: anything else that answers on port 7290
+/// fails the handshake rather than being mistaken for the receiver. The pin is
+/// what makes this a search rather than a guess.
+///
+/// A per-address timeout is needed because an unreachable address on a
+/// bridge network does not refuse the connection, it black-holes it, and the
+/// default TCP timeout would leave the user watching a spinner for minutes.
+async fn connect_to_receiver(
+    target: &OpenPlayTarget,
+    tls_config: Arc<openplay_crypto::ClientConfig>,
+) -> anyhow::Result<(
+    mpsc::Sender<SignalingMessage>,
+    mpsc::Receiver<SignalingMessage>,
+)> {
+    const PER_ADDRESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    if target.addrs.is_empty() {
+        anyhow::bail!("Receiver has no reachable address");
+    }
+
+    let mut last_error = None;
+    for addr in &target.addrs {
+        let url = match Url::parse(&format!("wss://{addr}")) {
+            Ok(u) => u,
+            Err(e) => {
+                warn!(%addr, %e, "Skipping unusable receiver address");
+                last_error = Some(format!("{addr}: {e}"));
+                continue;
+            }
+        };
+
+        let attempt = SignalingClient::new(url, tls_config.clone()).connect();
+        match tokio::time::timeout(PER_ADDRESS_TIMEOUT, attempt).await {
+            Ok(Ok(conn)) => {
+                info!(%addr, "Connected to receiver");
+                return Ok(conn);
+            }
+            Ok(Err(e)) => {
+                info!(%addr, %e, "Receiver did not answer on this address");
+                last_error = Some(format!("{addr}: {e}"));
+            }
+            Err(_) => {
+                info!(%addr, "Timed out on this address");
+                last_error = Some(format!("{addr}: timed out"));
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Could not reach the receiver on any advertised address ({})",
+        last_error.unwrap_or_else(|| "no addresses tried".to_string())
+    ))
+}
+
 async fn run_openplay_pipeline(
     target: OpenPlayTarget,
     capture_config: CaptureConfig,
@@ -693,14 +764,7 @@ async fn run_openplay_pipeline(
     let tls_config = openplay_crypto::client_config_pinned(&target.fingerprint)
         .map_err(|e| anyhow::anyhow!("Receiver certificate is not usable: {e}"))?;
 
-    let addr = target.addr;
-    let url = Url::parse(&format!("wss://{addr}"))
-        .map_err(|e| anyhow::anyhow!("Bad receiver address {addr}: {e}"))?;
-
-    let (outgoing, mut incoming) = SignalingClient::new(url, tls_config)
-        .connect()
-        .await
-        .map_err(|e| anyhow::anyhow!("Could not reach the receiver: {e}"))?;
+    let (outgoing, mut incoming) = connect_to_receiver(&target, tls_config).await?;
 
     // Ask for a session and wait to be let in. The receiver shows the user a
     // prompt, so this can sit here for as long as it takes somebody to walk
@@ -972,5 +1036,89 @@ mod openplay_tests {
     fn the_sender_id_is_stable_across_calls() {
         assert_eq!(sender_id(), sender_id());
         assert!(sender_id().starts_with("openplay-"));
+    }
+    use openplay_crypto::CertificateManager;
+    use openplay_signaling::{IncomingMessage, SignalingServer};
+
+    /// A sender must reach a receiver whose first advertised address is a dead
+    /// end, because that is the ordinary case rather than an edge case.
+    ///
+    /// mDNS advertises every interface. On a machine running Docker that means
+    /// `172.17.0.1` and `172.18.0.1` alongside the real address, and
+    /// `sort_by_connectability` puts them first — all three are routable IPv4,
+    /// so the tie breaks on the numeric value. A sender that dialled only
+    /// `addresses.first()` connected to its *own* Docker bridge and reported
+    /// the receiver as unreachable, which is consistent with OpenPlay never
+    /// having been reported working between two machines.
+    ///
+    /// The dead first address here is a closed loopback port, which is refused
+    /// immediately; a real bridge address black-holes instead, which is what
+    /// the per-address timeout covers. Either way the second address must win.
+    #[tokio::test]
+    async fn a_dead_first_address_does_not_stop_the_connection() {
+        let cert_dir = tempfile::tempdir().expect("create a temporary data dir");
+        let certs =
+            CertificateManager::load_or_generate(cert_dir.path()).expect("generate a certificate");
+        let fingerprint = certs.fingerprint().to_string();
+
+        let server = SignalingServer::bind(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            certs.server_config().expect("build a ServerConfig"),
+        )
+        .await
+        .expect("bind an ephemeral loopback port");
+        let live = server.local_addr().expect("read back the bound port");
+
+        let (inbox_tx, _inbox) = mpsc::channel::<IncomingMessage>(8);
+        let server_task = tokio::spawn(server.run(inbox_tx));
+
+        // Port 1 on loopback: nothing listens there, so the connection is
+        // refused rather than merely failing the TLS pin.
+        let dead = SocketAddr::from(([127, 0, 0, 1], 1));
+        let target = OpenPlayTarget {
+            addrs: vec![dead, live],
+            fingerprint: fingerprint.clone(),
+            display_name: "Test Sender".to_string(),
+        };
+
+        let tls_config = openplay_crypto::client_config_pinned(&fingerprint)
+            .expect("build a pinned client config");
+
+        let connected = connect_to_receiver(&target, tls_config)
+            .await
+            .expect("fall past the dead address and reach the live one");
+        drop(connected);
+        server_task.abort();
+    }
+
+    /// With no reachable address the failure has to name what was tried.
+    ///
+    /// The pin is what makes trying several addresses safe, so the error a user
+    /// sees should still distinguish "nothing answered" from "something
+    /// answered and was not the receiver".
+    #[tokio::test]
+    async fn every_address_dead_reports_what_was_tried() {
+        let certs =
+            CertificateManager::load_or_generate(tempfile::tempdir().expect("temp dir").path())
+                .expect("generate a certificate");
+        let fingerprint = certs.fingerprint().to_string();
+
+        let target = OpenPlayTarget {
+            addrs: vec![SocketAddr::from(([127, 0, 0, 1], 1))],
+            fingerprint: fingerprint.clone(),
+            display_name: "Test Sender".to_string(),
+        };
+
+        let tls_config = openplay_crypto::client_config_pinned(&fingerprint)
+            .expect("build a pinned client config");
+
+        let err = connect_to_receiver(&target, tls_config)
+            .await
+            .expect_err("nothing is listening on port 1");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("127.0.0.1:1"),
+            "the error should name the address that failed, got: {msg}"
+        );
     }
 }

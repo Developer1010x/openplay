@@ -92,6 +92,35 @@ impl DiscoveredReceiver {
         }
     }
 
+    /// Every address the receiver advertised, most-connectable first.
+    ///
+    /// `addr()` returns only the first of these, which is not enough for
+    /// OpenPlay: a receiver on a machine running Docker advertises its bridge
+    /// addresses alongside its real one, and `172.17.0.1` sorts ahead of
+    /// `192.168.1.10` because `sort_by_connectability` ranks all routable IPv4
+    /// alike and then breaks ties on the numeric value. Dialling only the first
+    /// address reaches the *sender's own* Docker bridge and never the receiver.
+    ///
+    /// Ranking cannot fix this on its own — the sender's `docker0` really is
+    /// `172.17.0.1/16`, so a same-subnet test also prefers the wrong address.
+    /// The caller therefore tries these in order, and the pinned certificate
+    /// decides which one was actually the receiver.
+    pub fn addrs(&self) -> Vec<SocketAddr> {
+        match self {
+            DiscoveredReceiver::OpenPlay(r) => r
+                .addresses
+                .iter()
+                .map(|ip| SocketAddr::new(*ip, r.port))
+                .collect(),
+            DiscoveredReceiver::AirPlay(r) => r
+                .addresses
+                .iter()
+                .map(|ip| SocketAddr::new(*ip, r.port))
+                .collect(),
+            DiscoveredReceiver::Miracast(_) => self.addr().into_iter().collect(),
+        }
+    }
+
     /// Wi-Fi Direct device address (for P2P Miracast).
     ///
     /// Linux-only: its sole caller in `app.rs` starts a Wi-Fi Direct P2P cast,

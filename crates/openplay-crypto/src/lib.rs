@@ -13,6 +13,13 @@ mod tls;
 pub use certs::CertificateManager;
 pub use tls::client_config_pinned;
 
+/// Re-exported so callers can name what `client_config_pinned` returns.
+///
+/// Without this a caller can hold the `Arc<ClientConfig>` but cannot write the
+/// type of a function that takes it, which forces the connection logic to stay
+/// inline at the one call site.
+pub use rustls::ClientConfig;
+
 use sha2::{Digest, Sha256};
 
 /// Computes a SHA-256 fingerprint of DER-encoded certificate bytes.
