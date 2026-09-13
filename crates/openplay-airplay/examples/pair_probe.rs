@@ -40,7 +40,13 @@ async fn main() -> anyhow::Result<()> {
     let session_id = uuid::Uuid::new_v4().to_string().to_uppercase();
     match TcpStream::connect(addr).await {
         Ok(mut stream) => {
-            match openplay_airplay::http_session::get_info_raw(&mut stream, &session_id).await {
+            match openplay_airplay::http_session::get_info_raw(
+                &mut stream,
+                &session_id,
+                openplay_airplay::http_session::DEFAULT_DEVICE_NAME,
+            )
+            .await
+            {
                 Ok((headers, body)) => {
                     let status = headers.lines().next().unwrap_or("(no status line)");
                     println!("   status:    {status}");
