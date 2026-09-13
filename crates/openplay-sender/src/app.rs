@@ -372,8 +372,9 @@ impl SenderApp {
                 // Both halves are required. Without the fingerprint the TLS
                 // connection would have nothing to pin, and connecting anyway
                 // would mean trusting whichever host answered.
-                match (receiver.addr(), receiver.fingerprint()) {
-                    (Some(addr), Some(fingerprint)) => {
+                let addrs = receiver.addrs();
+                match (addrs.first().copied(), receiver.fingerprint()) {
+                    (Some(_), Some(fingerprint)) => {
                         let fingerprint = fingerprint.to_string();
                         let display_name = self.config.display_name.clone();
                         std::thread::spawn(move || {
@@ -383,7 +384,7 @@ impl SenderApp {
                                 .unwrap();
                             rt.block_on(crate::casting::start_openplay_cast(
                                 crate::casting::OpenPlayTarget {
-                                    addr,
+                                    addrs,
                                     fingerprint,
                                     display_name,
                                 },

@@ -3269,6 +3269,7 @@ dependencies = [
  "openplay-pipeline",
  "openplay-protocol",
  "openplay-signaling",
+ "tempfile",
  "tokio",
  "tracing",
  "url",
