@@ -187,11 +187,18 @@ async fn post_stream(
         .await
         .map_err(|e| AirPlayError::Http(format!("Failed to send POST /stream body: {e}")))?;
 
-    // Read response status
-    let (status, _body) = read_http_response(stream).await?;
-    if !status.contains("200") {
+    // Read response status.
+    //
+    // `status` is the whole header block, so it must be matched a line at a
+    // time: `Content-Length: 1200` in a 500 response contains "200", and
+    // treating that as success would hand the caller a failed connection to
+    // write video into. The status line is also what the caller's retry logic
+    // parses, so it has to lead the message.
+    let (headers, _body) = read_http_response(stream).await?;
+    let status_line = headers.lines().next().unwrap_or("<no status line>");
+    if !status_line.contains(" 200") {
         return Err(AirPlayError::Negotiation(format!(
-            "POST /stream failed: {status}"
+            "POST /stream failed: {status_line}"
         )));
     }
 

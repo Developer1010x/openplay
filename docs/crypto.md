@@ -142,11 +142,25 @@ Real FairPlay uses Apple's fixed key tables and a specific challenge-response
 transform. Neither is present, so every key derived here would be wrong.
 
 **The module is not wired in.** `fp_setup` has no callers: `session.rs` never
-references `fairplay.rs`. Instead `negotiate_with_auth` reads the model string
-from `/info` and refuses `AppleTV2,*` / `AppleTV3,*` up front with an explicit
-"requires FairPlay authentication which is not supported" error. That is a better
-failure than a mysterious reset, and it means the placeholder keys are never
-actually put on the wire.
+references `fairplay.rs`. That, and only that, is what keeps the placeholder keys
+off the wire — the model-string check described below never had anything to do
+with it.
+
+`negotiate_with_auth` used to *refuse* `AppleTV2,*` / `AppleTV3,*` outright on
+the model string read from `/info`. It no longer does, because the premise was
+wrong: the string is self-reported and third-party receivers borrow it freely
+for client compatibility. A Vivitek NovoConnect on the test network advertises
+`AppleTV3,1` over mDNS and reports `AppleTV3,2` from `/info` while being neither
+Apple nor FairPlay-gated — it has no HomeKit pairing and a `/fp-setup` that
+answers 200 to an empty body. Refusing it meant never discovering that it
+authenticates fine and simply does not implement mirroring.
+
+What replaced the refusal is a check on evidence rather than on a name: feature
+bit 48, the receiver's own statement about whether it supports transient
+pairing. A genuine Apple TV 2/3 does not set it and is turned away with a
+specific reason that names FairPlay and points here; a third-party box that
+merely reuses the model string is not. The model string now produces a warning
+only.
 
 `fp_setup` does log a warning on entry (`fairplay.rs:94`) saying it cannot
 interoperate — but since nothing calls it, that warning never fires. Treat the
