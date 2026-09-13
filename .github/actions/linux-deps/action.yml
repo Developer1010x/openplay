@@ -1,19 +1,34 @@
 name: Install Linux build dependencies
 description: >
-  Installs the GStreamer and PipeWire headers the Linux jobs need, with the
-  retry and non-interactive handling that a bare apt-get call lacks.
+  Installs the GStreamer and PipeWire packages the Linux jobs need — headers to
+  compile against and plugins to run the tests — with the retry and
+  non-interactive handling that a bare apt-get call lacks.
 
-  Only -base is installed, not -bad. No crate references gstreamer-webrtc,
-  -sdp or -video; openplay-pipeline uses gstreamer and gstreamer-app only, and
-  gstapp lives in -base. libgstreamer-plugins-bad1.0-dev hard-depends on
-  libopencv-dev, which is what made this step download 220 MB across 349
-  packages and time out. If the WebRTC path is ever wired up, add
-  libgstreamer-plugins-bad1.0-dev back here and expect that cost to return.
+  Two different kinds of package are installed below and they are not
+  interchangeable. A `-dev` package provides the pkg-config file and headers a
+  `*-sys` crate links against; it does NOT provide the runtime plugin .so that
+  GStreamer loads from its registry. The reverse is also true. A missing -dev
+  package fails the build outright; a missing plugin package builds fine and
+  then fails at ElementFactory::make(), as a MissingElement error from
+  openplay-pipeline or as a named panic in the tests.
 
-  This is a CI-only trim, and docs/install.md must NOT be trimmed to match:
-  running the app needs gstreamer1.0-plugins-bad at runtime (h264parse lives
-  there). CI only compiles and runs unit tests, none of which call
-  gstreamer::init(), so no plugin is ever loaded.
+  libgstreamer-plugins-bad1.0-dev is back, and it is the expensive one. The
+  comment it replaces predicted this: "If the WebRTC path is ever wired up, add
+  libgstreamer-plugins-bad1.0-dev back here and expect that cost to return."
+  The WebRTC path is now wired up, openplay-pipeline depends on the
+  gstreamer-webrtc crate, and gstreamer-webrtc-sys asks pkg-config for
+  gstreamer-webrtc-1.0 — which on Ubuntu 24.04 no other package provides
+  (`pkg-config --variable=pcfiledir gstreamer-webrtc-1.0` -> dpkg -S). It hard-
+  depends on libopencv-dev, so the whole set is now ~660 packages / ~370 MB from
+  a bare system rather than ~170 / ~95 MB. There is no lighter package and no
+  --no-install-recommends trick that avoids opencv: it is a Depends, not a
+  Recommends. If openplay-pipeline ever stops using gstreamer-webrtc, drop this
+  package again and the cost goes with it.
+
+  docs/install.md must NOT be trimmed to match this list, and this list must not
+  be trimmed to match docs/install.md. They answer different questions: that
+  file lists what a user needs to run the app, this one lists what CI needs to
+  compile it and run `cargo test --all`.
 
 runs:
   using: composite
@@ -37,6 +52,72 @@ runs:
           sleep 5
         done
 
+        # Headers and pkg-config files. These decide whether the workspace
+        # *compiles*; none of them makes a single GStreamer element available.
+        packages=(
+          # gstreamer-1.0.pc, for the `gstreamer` crate. Also pulls
+          # libgstreamer1.0-0, whose coreelements plugin provides `queue` and
+          # `capsfilter` — the two elements no plugin package below supplies.
+          libgstreamer1.0-dev
+
+          # gstreamer-app-1.0.pc, -video-1.0.pc and -sdp-1.0.pc, for the
+          # `gstreamer-app`, `gstreamer-video` and `gstreamer-sdp` crates.
+          # GstSdp lives in -base even though webrtcbin does not.
+          libgstreamer-plugins-base1.0-dev
+
+          # gstreamer-webrtc-1.0.pc, for the `gstreamer-webrtc` crate that
+          # crates/openplay-pipeline/src/webrtc.rs uses. See the note in this
+          # file's description: this is the libopencv-dev one, it is unavoidable
+          # while openplay-pipeline depends on gstreamer-webrtc, and removing it
+          # breaks the build outright rather than degrading it.
+          libgstreamer-plugins-bad1.0-dev
+
+          # libpipewire-0.3.pc, for openplay-capture's Linux portal path.
+          libpipewire-0.3-dev
+
+          # ── Runtime plugins, from here down ───────────────────────────────
+          # Needed because tests now load a real element graph. Until the
+          # WebRTC path was wired up, no test called gstreamer::init(), so no
+          # plugin was ever loaded and none of these was installed.
+          # crates/openplay-pipeline/tests/webrtc_loopback.rs now negotiates two
+          # webrtcbins and asserts decoded frames come out the far end.
+          # Element -> package below was checked with `gst-inspect-1.0 <element>`
+          # and `dpkg -S` on the same ubuntu-24.04 base the runners use.
+
+          # videotestsrc (the test's video source), videoconvert, and appsink —
+          # ReceiverPipeline's frame handler reads from appsink, which lives in
+          # libgstapp.so here, not in the -dev package of the same name.
+          gstreamer1.0-plugins-base
+
+          # rtph264pay / rtph264depay, both in libgstrtp.so. Without them the
+          # sender cannot packetise and the receiver cannot depacketise.
+          gstreamer1.0-plugins-good
+
+          # webrtcbin itself (libgstwebrtc.so) and h264parse
+          # (libgstvideoparsersbad.so). This is the runtime plugin package and
+          # is a *different* package from libgstreamer-plugins-bad1.0-dev above;
+          # installing the -dev one does not bring it.
+          gstreamer1.0-plugins-bad
+
+          # x264enc, which the loopback test encodes with. The pipeline's
+          # encoder probe would fall back to it on a runner in any case: there
+          # is no VA-API or NVENC device on a hosted runner.
+          gstreamer1.0-plugins-ugly
+
+          # avdec_h264. build_decoder_element() in pipeline/encoder.rs tries
+          # vah264dec and nvh264dec first, neither of which registers without a
+          # DRM device, so on a hosted runner the software fallback is the only
+          # decoder that exists — and no decoder means no decoded frames means
+          # the loopback test's final assertion fails.
+          gstreamer1.0-libav
+
+          # nicesrc / nicesink. webrtcbin's default ICE agent builds these, and
+          # without them it refuses every sink_%u pad request, so no session can
+          # be established at all. Nothing else in this list depends on it, and
+          # the test asserts its presence up front rather than skipping.
+          gstreamer1.0-nice
+        )
+
         # Both commands are wrapped in `timeout` as well as retried. A
         # step-level `timeout-minutes:` in the workflow would NOT bound this:
         # GitHub does not enforce step timeouts on a step whose `uses:` is a
@@ -50,6 +131,13 @@ runs:
         # explicit flag this loop fell through silently on total failure and
         # the real error surfaced later as a confusing "unable to locate
         # package".
+        #
+        # The install bound is 600s, not the 420s it was before opencv came
+        # back. Worst case here is 3*180 + 3*600 = 39 minutes, which is why the
+        # jobs that call this action allow at least 45; if a job's
+        # timeout-minutes drops below that, a genuine apt failure gets reported
+        # as a job timeout instead of as the ::error:: at the bottom of this
+        # script.
         updated=
         for attempt in 1 2 3; do
           if sudo -E timeout 180 apt-get update -o Acquire::Retries=3; then
@@ -64,11 +152,9 @@ runs:
         fi
 
         for attempt in 1 2 3; do
-          if sudo -E timeout 420 apt-get install -y --no-install-recommends \
+          if sudo -E timeout 600 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 \
-              libgstreamer1.0-dev \
-              libgstreamer-plugins-base1.0-dev \
-              libpipewire-0.3-dev; then
+              "${packages[@]}"; then
             exit 0
           fi
           echo "apt-get install failed (attempt $attempt/3), retrying..."

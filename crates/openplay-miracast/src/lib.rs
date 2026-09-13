@@ -30,6 +30,12 @@ pub enum MiracastError {
     #[error("RTSP error: {0}")]
     Rtsp(String),
 
+    /// The sink went quiet. Distinct from [`MiracastError::Rtsp`] because a
+    /// stalled sink is the one failure with no message to quote — the read
+    /// simply never returns, and the cast has to be ended on our own clock.
+    #[error("RTSP timed out after {0:?} waiting for the sink")]
+    RtspTimeout(std::time::Duration),
+
     #[error("WFD negotiation failed: {0}")]
     Negotiation(String),
 

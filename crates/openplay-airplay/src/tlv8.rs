@@ -13,6 +13,10 @@ pub struct Tlv8Item {
 }
 
 /// HAP TLV type constants.
+///
+/// Matches pyatv `pyatv/auth/hap_tlv8.py`'s `TlvValue` enum, which names
+/// [`STATE`] `SeqNo` and [`RETRY_DELAY`] `BackOff`; the names here follow the
+/// HAP specification's `kTLVType_*`, the values are the same.
 pub mod tags {
     pub const METHOD: u8 = 0x00;
     pub const IDENTIFIER: u8 = 0x01;
@@ -22,6 +26,8 @@ pub mod tags {
     pub const ENCRYPTED_DATA: u8 = 0x05;
     pub const STATE: u8 = 0x06;
     pub const ERROR: u8 = 0x07;
+    /// `kTLVType_RetryDelay`, in seconds. HAP integer TLVs are little-endian
+    /// and variable width — see `hap_pairing::retry_delay_secs`.
     pub const RETRY_DELAY: u8 = 0x08;
     pub const CERTIFICATE: u8 = 0x09;
     pub const SIGNATURE: u8 = 0x0A;
@@ -32,16 +38,29 @@ pub mod tags {
     pub const SEPARATOR: u8 = 0xFF;
 }
 
-/// HAP pairing method constants.
+/// HAP pairing method constants (`kTLVType_Method` values).
+///
+/// Pinned by `method_constants_match_the_hap_specification` against pyatv
+/// `pyatv/auth/hap_tlv8.py`'s `Method` enum. `PAIR_VERIFY` was `0x01` here until
+/// that check was written; `0x01` is a *different real method*
+/// (`PairSetupWithAuth`), so the wrong value named a method that exists and
+/// would have been accepted and then answered for the wrong flow. It is kept
+/// below, unused, so the collision stays visible.
 pub mod methods {
     pub const PAIR_SETUP: u8 = 0x00;
-    pub const PAIR_VERIFY: u8 = 0x01;
+    pub const PAIR_SETUP_WITH_AUTH: u8 = 0x01;
+    pub const PAIR_VERIFY: u8 = 0x02;
     pub const ADD_PAIRING: u8 = 0x03;
     pub const REMOVE_PAIRING: u8 = 0x04;
+    pub const LIST_PAIRINGS: u8 = 0x05;
 }
 
-/// HAP error codes.
+/// HAP error codes (`kTLVType_Error` values).
 pub mod errors {
+    /// `kTLVError_None`. Not in pyatv's `ErrorCode` enum, which starts at
+    /// `Unknown = 0x01`; the HAP specification defines 0x00 as "no error", and
+    /// an accessory that sends the TLV with this value is reporting success.
+    pub const NONE: u8 = 0x00;
     pub const UNKNOWN: u8 = 0x01;
     pub const AUTHENTICATION: u8 = 0x02;
     pub const BACKOFF: u8 = 0x03;
@@ -232,5 +251,69 @@ mod tests {
     fn test_truncated_errors() {
         assert!(decode(&[0x06]).is_err());
         assert!(decode(&[0x06, 0x05, 0x01]).is_err());
+    }
+
+    /// Pins every wire constant against an implementation known to interoperate
+    /// with Apple hardware, rather than against our own reading of the spec.
+    ///
+    /// Reference: pyatv 0.18.0, `pyatv/auth/hap_tlv8.py` — `class Method`:
+    ///
+    /// ```text
+    /// PairSetup = 0x00
+    /// PairSetupWithAuth = 0x01
+    /// PairVerify = 0x02
+    /// AddPairing = 0x03
+    /// RemovePairing = 0x04
+    /// ListPairing = 0x05
+    /// ```
+    ///
+    /// `PAIR_VERIFY` was `0x01` before this test existed. Nothing caught it,
+    /// because no test asserted a value and pair-verify is unreachable until
+    /// pair-setup is confirmed against hardware.
+    #[test]
+    fn method_constants_match_the_hap_specification() {
+        assert_eq!(methods::PAIR_SETUP, 0x00);
+        assert_eq!(methods::PAIR_SETUP_WITH_AUTH, 0x01);
+        assert_eq!(methods::PAIR_VERIFY, 0x02, "0x01 is PairSetupWithAuth");
+        assert_eq!(methods::ADD_PAIRING, 0x03);
+        assert_eq!(methods::REMOVE_PAIRING, 0x04);
+        assert_eq!(methods::LIST_PAIRINGS, 0x05);
+
+        assert_ne!(
+            methods::PAIR_VERIFY,
+            methods::PAIR_SETUP_WITH_AUTH,
+            "these are different methods and must not share a value"
+        );
+    }
+
+    /// Reference: pyatv 0.18.0, `pyatv/auth/hap_tlv8.py` — `class TlvValue`
+    /// (`SeqNo = 0x06`, `Error = 0x07`, `BackOff = 0x08`, `Flags = 0x13`) and
+    /// `class ErrorCode` (`Unknown = 0x01` .. `Busy = 0x07`).
+    #[test]
+    fn tag_and_error_constants_match_the_hap_specification() {
+        assert_eq!(tags::METHOD, 0x00);
+        assert_eq!(tags::IDENTIFIER, 0x01);
+        assert_eq!(tags::SALT, 0x02);
+        assert_eq!(tags::PUBLIC_KEY, 0x03);
+        assert_eq!(tags::PROOF, 0x04);
+        assert_eq!(tags::ENCRYPTED_DATA, 0x05);
+        assert_eq!(tags::STATE, 0x06, "pyatv calls this SeqNo");
+        assert_eq!(tags::ERROR, 0x07);
+        assert_eq!(tags::RETRY_DELAY, 0x08, "pyatv calls this BackOff");
+        assert_eq!(tags::CERTIFICATE, 0x09);
+        assert_eq!(tags::SIGNATURE, 0x0A);
+        assert_eq!(tags::PERMISSIONS, 0x0B);
+        assert_eq!(tags::FRAGMENT_DATA, 0x0C);
+        assert_eq!(tags::FRAGMENT_LAST, 0x0D);
+        assert_eq!(tags::FLAGS, 0x13);
+
+        assert_eq!(errors::NONE, 0x00);
+        assert_eq!(errors::UNKNOWN, 0x01);
+        assert_eq!(errors::AUTHENTICATION, 0x02);
+        assert_eq!(errors::BACKOFF, 0x03);
+        assert_eq!(errors::MAX_PEERS, 0x04);
+        assert_eq!(errors::MAX_TRIES, 0x05);
+        assert_eq!(errors::UNAVAILABLE, 0x06);
+        assert_eq!(errors::BUSY, 0x07);
     }
 }

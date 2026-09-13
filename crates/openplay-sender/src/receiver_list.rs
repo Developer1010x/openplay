@@ -64,6 +64,18 @@ impl DiscoveredReceiver {
         }
     }
 
+    /// The receiver's TLS certificate fingerprint, from its mDNS `fp` TXT key.
+    ///
+    /// Only OpenPlay receivers publish one. It is required to connect: the
+    /// receiver's certificate is self-signed, so the fingerprint is the only
+    /// thing that distinguishes it from any other host that answers.
+    pub fn fingerprint(&self) -> Option<&str> {
+        match self {
+            DiscoveredReceiver::OpenPlay(r) => Some(&r.fingerprint),
+            DiscoveredReceiver::AirPlay(_) | DiscoveredReceiver::Miracast(_) => None,
+        }
+    }
+
     /// Primary address for connection.
     pub fn addr(&self) -> Option<SocketAddr> {
         match self {

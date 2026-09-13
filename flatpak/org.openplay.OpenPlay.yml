@@ -10,12 +10,17 @@ command: openplay-sender
 finish-args:
   - --socket=wayland
   - --socket=fallback-x11
-  - --socket=pulseaudio
   - --share=network
   - --share=ipc
   - --device=dri
-  - --talk-name=org.freedesktop.portal.Desktop
-  - --talk-name=org.freedesktop.portal.Background
+  # No --socket=pulseaudio: OpenPlay has no audio code at all. Verified with
+  #   grep -rniE 'audiosrc|audiosink|opusenc|pulse' crates/ --include='*.rs'
+  # which matches nothing. Screen casting here is video-only, so requesting the
+  # audio socket would only widen the sandbox for a capability never used.
+  #
+  # No --talk-name=org.freedesktop.portal.* either: every portal name is already
+  # reachable from inside a sandbox by default, so those lines granted nothing.
+  # Screen capture goes through the ScreenCast portal on that default access.
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
@@ -32,5 +37,31 @@ modules:
       - install -Dm644 data/org.openplay.OpenPlay.metainfo.xml /app/share/metainfo/org.openplay.OpenPlay.metainfo.xml
       - install -Dm644 data/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg /app/share/icons/hicolor/scalable/apps/org.openplay.OpenPlay.svg
     sources:
+      # KNOWN BROKEN — this manifest does not build yet. Do not treat a green
+      # `flatpak-builder` invocation elsewhere as evidence that it does.
+      #
+      # The build-commands above run `cargo --offline`, but nothing here
+      # supplies the crate sources offline. flatpak-builder gives the build no
+      # network, so `cargo --offline fetch` fails on the first dependency that
+      # is not already in the registry cache — which, in a clean sandbox, is
+      # every one of them.
+      #
+      # Fixing it properly means one of:
+      #   a) run `flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json`
+      #      (from flatpak-builder-tools) and splice the generated entries into
+      #      this `sources:` list, regenerating whenever Cargo.lock changes; or
+      #   b) commit a `cargo vendor` tree and add the matching
+      #      .cargo/config.toml source replacement.
+      #
+      # Neither is set up. That is left as deliberate follow-up rather than
+      # guessed at here, because (a) needs the generator run against the real
+      # Cargo.lock and (b) is a large committed tree — both are decisions, not
+      # edits.
       - type: dir
         path: ..
+        # Without these, `type: dir` copies the whole working tree into the
+        # build — including target/, which is ~14 GB on a developer machine.
+        skip:
+          - target
+          - dist
+          - .git

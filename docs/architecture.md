@@ -1,50 +1,52 @@
 # Architecture
 
 OpenPlay is a flat Cargo workspace of eleven crates. Two are binaries; the other
-nine are libraries — though three of them (`openplay-signaling`, `-protocol`
-and `-crypto`) are not reached from either binary yet.
+nine are libraries, and every one of them is now reached from at least one
+binary.
 
-For what actually works today versus what is designed but unwired, see the
-Status section of the [README](../README.md). This document describes the shape
-of the code, including the parts that are not yet connected — where that is the
-case, it says so.
+For what actually works today versus what is merely connected, see the Status
+section of the [README](../README.md). This document describes the shape of the
+code. Where a path is wired but unverified — which is most of the OpenPlay and
+Miracast paths — it says so.
 
 ## Crate graph
 
-Solid arrows are dependencies the code actually uses today.
+Arrows are dependencies the code actually uses today.
 
 ```
-openplay-sender (bin)                    openplay-receiver (bin)
-      │                                            │
-      ├── casting.rs                               └── app.rs, window.rs
-      │                                                     │
-      ▼                                                     ▼
- openplay-airplay  openplay-miracast              openplay-common
- openplay-pipeline openplay-capture
- openplay-discovery
-      │
-      └── openplay-common
-
-not reached from either binary:
- openplay-signaling ── openplay-protocol      openplay-crypto
- (SignalingServer/Client)                     (CertificateManager)
+openplay-sender (bin)                     openplay-receiver (bin)
+      │                                             │
+      ├── app.rs, receiver_list.rs                  ├── app.rs, window.rs
+      └── casting.rs                                └── net.rs
+      │                                             │
+      ▼                                             ▼
+ openplay-airplay   openplay-capture         openplay-discovery
+ openplay-miracast  openplay-discovery       openplay-signaling
+ openplay-pipeline  openplay-signaling       openplay-protocol
+ openplay-protocol  openplay-crypto          openplay-crypto
+      │                                      openplay-pipeline
+      └── openplay-common                    openplay-common
 ```
 
-The receiver's only dependency is `openplay-common` — it is a window and nothing
-more. `openplay-signaling`, `-protocol` and `-crypto` are workspace members with
-no consumer in either binary; the WebRTC path that would use them is unwired.
+The receiver is no longer a window with one dependency: `net.rs` owns mDNS
+advertisement, the TLS signaling server and the session loop, so it pulls in
+`-crypto`, `-discovery`, `-pipeline`, `-protocol` and `-signaling`. The sender
+gained `-signaling`, `-protocol`, `-crypto` and `url` for the same reason.
+
+Only `openplay-capture` is asymmetric: the sender captures a screen, the
+receiver displays one, so the receiver does not depend on it.
 
 | Crate | Owns |
 |---|---|
-| `openplay-sender` | Binary. egui UI, receiver list, `casting.rs` orchestration |
-| `openplay-receiver` | Binary. egui window showing a static "waiting" page |
+| `openplay-sender` | Binary. egui UI, receiver list, `casting.rs` orchestration for all three protocols |
+| `openplay-receiver` | Binary. egui window (waiting page, consent prompt, video) plus `net.rs` — advertisement, signaling server, session loop |
 | `openplay-airplay` | AirPlay: HAP pairing, SRP, NTP, mirror stream, TLV8. Also `fairplay.rs`, which has no callers |
 | `openplay-miracast` | Miracast/WFD: RTSP, WFD params, Wi-Fi Direct (Linux) |
-| `openplay-pipeline` | GStreamer pipeline construction, encoder probing |
-| `openplay-signaling` | WebSocket signaling client and server. Never constructed |
+| `openplay-pipeline` | GStreamer pipeline construction, encoder probing, and `webrtc.rs` — SDP and trickle ICE over `webrtcbin` |
+| `openplay-signaling` | TLS WebSocket signaling client and server |
 | `openplay-discovery` | mDNS advertisement and browsing |
-| `openplay-protocol` | `SignalingMessage` wire format and connection state machines |
-| `openplay-crypto` | Self-signed certificate lifecycle. Never constructed |
+| `openplay-protocol` | `SignalingMessage` wire format and connection state machines. The messages are used; **the state machines still have no callers** |
+| `openplay-crypto` | Self-signed certificate lifecycle plus `tls.rs`, the rustls server and pinning-client configs |
 | `openplay-capture` | Screen capture abstraction |
 | `openplay-common` | `AppConfig`, XDG paths, logging, shared constants |
 
@@ -141,11 +143,18 @@ then exposes a file descriptor and a PipeWire node ID that GStreamer's
 `pipewiresrc` consumes.
 
 On macOS and Windows there is no portal: `CaptureSession` in `desktop.rs` only
-reports the primary display size, and capture itself is left to GStreamer's own
-elements — `d3d11screencapturesrc` on Windows, `screencapturesrc` (GStreamer
-1.22+) or `avfvideosrc` on macOS, selected in `pipeline/encoder.rs`. Neither has
-been exercised, so treat them as untested rather than working. See the README
-Status section.
+reports a display size, and capture itself is left to GStreamer's own elements —
+`d3d11screencapturesrc` on Windows, `screencapturesrc` (GStreamer 1.22+) or
+`avfvideosrc` on macOS, selected in `pipeline/encoder.rs`. Neither has been
+exercised, so treat them as untested rather than working. See the README Status
+section.
+
+Be precise about "reports the display size", because only Windows does.
+`query_primary_display_size()` calls `GetSystemMetrics(SM_CXSCREEN/SM_CYSCREEN)`
+under `#[cfg(target_os = "windows")]`; the `#[cfg(target_os = "macos")]` branch
+is an empty block containing a comment about using CoreGraphics, so control
+falls through to the shared default and **macOS always reports a hardcoded
+1920x1080**, whatever the panel actually is.
 
 `CaptureConfig` (`pipeline/capture_config.rs`) carries the node ID, fd,
 resolution and framerate into the pipeline constructors.
@@ -164,10 +173,13 @@ was: `wifi_direct` was correctly gated in `lib.rs` but imported unconditionally
 in `session.rs`, so the crate did not compile off Linux for months without
 anyone noticing.
 
-CI now guards this with a `cross-platform-check` job on macOS and Windows. It
-covers every crate that builds without GStreamer or PipeWire —
+CI now guards this with a `cross-platform-check` job on macOS and Windows, and
+an `MSRV` job that uses the same crate selection. Both are expressed as
+`--workspace` minus `openplay-pipeline`, `-sender` and `-receiver`, so they cover
+every crate that builds without GStreamer or PipeWire — today
 `openplay-common`, `-protocol`, `-crypto`, `-capture`, `-discovery`,
-`-signaling`, `-airplay` and `-miracast` — so it needs no system packages.
+`-signaling`, `-airplay` and `-miracast` — and a new crate is picked up
+automatically rather than being silently uncovered.
 
 `openplay-capture` is on that list deliberately: its Windows build was broken by
 exactly this class of mistake (`desktop.rs` used the `windows` crate without
@@ -191,39 +203,124 @@ overrides, because `--port 0` and `--name ""` bypass the first check. See
 
 ## The OpenPlay/WebRTC path
 
-This is the native protocol, and it is the part that is **not yet wired to
-either binary**. The libraries exist but have no test coverage: nothing in the
-workspace constructs `SenderPipeline`, `ReceiverPipeline`, `SignalingServer`,
-`SignalingClient` or `ReceiverAdvertiser`, and `openplay-signaling` has no tests
-at all.
+This is the native protocol, and it is now driven by both binaries. What it has
+never had is a report of working between two separate machines — the coverage is
+all in-process. Read this section as "here is the call path", not "here is a
+proven feature".
 
-One piece *is* wired: the sender starts `ReceiverBrowser`, so it browses
-`_openplay._tcp.local.`. Nothing advertises that service, so it never finds
-anything.
+### Receiver: `receiver/src/net.rs`
 
-Designed flow:
+`net::start` runs before the window opens, so the mDNS service is registered by
+the time the waiting page appears, and returns a `NetHandle` the window holds
+for the life of the process. Dropping it unregisters the service and stops the
+runtime. In order:
 
-1. The receiver starts `ReceiverAdvertiser` (mDNS, `_openplay._tcp.local.`) and
-   `SignalingServer` (WebSocket).
-2. The sender runs `ReceiverBrowser` to find receivers, then connects with
-   `SignalingClient`.
-3. Signaling exchanges, in order: session negotiation → pairing or
-   authentication → SDP offer/answer → ICE candidates.
-4. On ICE connect, the sender builds a `SenderPipeline`; the receiver builds a
-   `ReceiverPipeline`.
+1. `CertificateManager::load_or_generate(data_dir)` — this is the first launch
+   at which a certificate exists on disk.
+2. `ReceiverAdvertiser::new(txt_record(config, certs.fingerprint()))`, inside
+   `runtime.enter()` because the mDNS daemon spawns work expecting a reactor.
+   Advertising **first** is deliberate: the fingerprint in the TXT record must
+   match the certificate the server is about to present.
+3. `SignalingServer::bind` on `[::]:port` with `certs.server_config()`, falling
+   back to `0.0.0.0` on hosts with IPv6 disabled. Dual-stack matters because
+   mDNS advertises every interface address including IPv6 ones, and an
+   IPv4-only bind would publish addresses nothing listens on.
+4. A `SessionLoop` task, which owns all session state and handles one message at
+   a time.
 
-The wire format is `SignalingMessage` in `openplay-protocol`, with
-`SenderStateMachine` and `ReceiverStateMachine` enforcing legal transitions. See
-[protocols.md](protocols.md#openplay-webrtc) for the message list.
+A failed advertisement is **degraded, not fatal**: the window says the receiver
+is not discoverable, and the server still accepts a sender given the address by
+hand. A failed bind is fatal, and is reported before the window claims to be
+listening.
 
-What is missing is the glue: `sender/src/app.rs` has a `Protocol::OpenPlay` arm
-that sets a status string and stops, and `receiver/src/window.rs` is a static
-page.
+### Sender: `sender/src/casting.rs`
 
-Both binaries also used to *declare* dependencies on `openplay-signaling`,
-`-protocol` and `-crypto` without importing them — the receiver declared eight
-unused dependencies in total, including `gstreamer` and `openplay-pipeline`.
-Those declarations have been removed, so the manifests now describe what is
-actually used, and re-adding one is the first step of wiring this path up.
+`start_openplay_cast` is called from the `Protocol::OpenPlay` arm of
+`sender/src/app.rs`, which requires **both** an address and a fingerprint from
+the discovered receiver. Missing either is a visible failure — there is no
+fall-back to unpinned TLS, because connecting anyway would mean trusting
+whichever host answered.
 
-Tracked in issue #11's follow-up work.
+It captures the screen, pins with `openplay_crypto::client_config_pinned`,
+connects `SignalingClient` to `wss://addr`, sends `SessionRequest`, and then
+**waits with no timeout** for the human at the far end. Only after
+`SessionAccept` does it build a `SenderPipeline` — there is no point touching
+the GPU before that. `drive_session` then pumps SDP and ICE in both directions
+until the cast ends.
+
+### Consent is the security model
+
+The receiver refuses to display anything until a person presses **Allow** on the
+prompt in `window.rs`. `handle_session_request` sets `Status::PendingConsent` and
+stops; only `NetHandle::decide` sends `SessionAccept`. The decision carries the
+`ConnectionId` from the prompt, so an answer cannot land on a different sender
+that connected in between, and a prompt whose sender disappeared is cleared by
+the liveness tick rather than left on screen.
+
+Be clear about why the prompt has to exist. **Nothing on this path authenticates
+a sender**: the mDNS TXT record is unauthenticated, so pinning its fingerprint
+gives confidentiality against a passive eavesdropper and detects a substituted
+certificate later, but is not proof of identity. `openplay-protocol` defines
+`PairingChallenge` / `PairingResponse` / `PairingConfirm` and the `Auth*`
+messages; **nothing sends or handles them**, and the session goes straight from
+negotiation to SDP. Without the prompt, any device on the network could put
+pixels on the screen unprompted.
+
+One session runs at a time, because there is one screen; a second sender is
+refused with `RejectReason::Busy` rather than silently replacing the first. Only
+the connection that owns a session may end it.
+
+### `pipeline/webrtc.rs`
+
+The pipelines build element graphs and never talk to a peer. `WebRtcPeer` is the
+part in between: it drives `webrtcbin`'s offer/answer dance and converts its
+GObject signals into `WebRtcEvent`s.
+
+Three constraints shape it, and each is easy to get wrong:
+
+- **The channel is unbounded on purpose.** `webrtcbin` delivers promise replies,
+  ICE candidates and state changes on GStreamer streaming threads, while
+  signaling lives in tokio. `UnboundedSender::send` is synchronous and needs no
+  reactor; `Sender::blocking_send` panics outright when called from inside a
+  runtime thread. Traffic is a handful of messages per session.
+- **Exactly one peer offers.** `Role::Offerer` answers `on-negotiation-needed`
+  by building an offer; `Role::Answerer` ignores that signal and only answers
+  once `set_remote_description` has fed it an offer. Both offering, or neither,
+  is the classic way to get a session that negotiates forever and carries no
+  video.
+- **The pipeline must be playing before negotiation.** An unstarted `webrtcbin`
+  has no clock and produces no ICE candidates, which is why both ends start
+  their pipeline before creating a description.
+
+No STUN or TURN server is configured, so only host candidates are gathered.
+That is deliberate — casts are LAN-local, and contacting a third-party STUN
+server would leak that a cast is happening. `WebRtcPeer::set_stun_server` exists
+for deployments that need it.
+
+### `webrtcbin` needs the `nice` plugin
+
+Without libnice's GStreamer plugin, `webrtcbin` constructs successfully and then
+refuses every `sink_%u` pad request, so nothing links and the failure names no
+cause. It is packaged separately from `gst-plugins-bad` everywhere — see
+[install.md](install.md#the-nice-plugin-specifically).
+
+### What covers it, and what does not
+
+- `crates/openplay-signaling/tests/loopback.rs` — three tests over real loopback
+  TLS: a full session exchange, a client pinning the wrong certificate being
+  refused, and the server dropping messages that fail validation.
+- `crates/openplay-pipeline/tests/webrtc_loopback.rs` — two `webrtcbin`s
+  negotiating in one process and carrying decoded frames, asserting the RGBA
+  packing contract. It builds a `videotestsrc`-fed **look-alike** of
+  `SenderPipeline` rather than the real one, which is hardwired to a PipeWire
+  source needing a desktop portal and a user click. So the real sender graph is
+  not what this test exercises.
+- `crates/openplay-crypto/tests/tls_handshake_test.rs` — three tests on pinning,
+  including that the default verifier would reject the same certificate.
+
+Not covered: two machines, a real network, mDNS between hosts, and the real
+capture-fed sender pipeline. `SenderStateMachine` and `ReceiverStateMachine` in
+`openplay-protocol` are still unused by both binaries and by the signaling
+crate — the loops enforce their own ordering instead. The wire format is
+`SignalingMessage`; see [protocols.md](protocols.md#openplay-webrtc) for the
+message list.

@@ -470,6 +470,123 @@ mod tests {
         );
     }
 
+    /// Cross-implementation known-answer vector.
+    ///
+    /// # Where these numbers come from
+    ///
+    /// Generated with **srptools 1.0.1**, which is the SRP engine pyatv drives
+    /// HAP pair-setup with — `pyatv/auth/hap_srp.py:140` constructs it as
+    ///
+    /// ```python
+    /// SRPContext("Pair-Setup", str(pin), prime=constants.PRIME_3072,
+    ///            generator=constants.PRIME_3072_GEN, hash_func=hashlib.sha512)
+    /// ```
+    ///
+    /// and the vector below was produced with exactly that configuration,
+    /// `I = "Pair-Setup"`, `P = "3939"`, `s = 0x11 * 16`, `a = 0x30 * 32`,
+    /// `b = 0x40 * 32`, using **srptools' own `PRIME_3072`**, not ours.
+    ///
+    /// That last point is the whole value of this test.
+    /// `client_and_reference_server_agree` above runs our client against a
+    /// server written in this file: both halves share [`SRP_N_HEX`], so they
+    /// agree on a wrong group exactly as happily as a right one — the
+    /// self-consistency trap that let a fabricated, composite `N` ship. Here
+    /// `A`, `K`, `M1` and `M2` were computed under a modulus this repository
+    /// never supplied, so they only reproduce if our `N`, our generator, our
+    /// hash composition, and our `PAD()` rules all match a third party's.
+    ///
+    /// # Encoding caveat
+    ///
+    /// srptools serialises integers with their minimal big-endian encoding
+    /// (`srptools/utils.py::int_to_bytes`) where RFC 5054's `PAD()` left-pads
+    /// to `len(N)`; the two coincide only for values with no leading zero byte.
+    /// `a` and `b` were chosen so `A`, `B` and `S` are all exactly 384 bytes and
+    /// the salt exactly 16, so the vector is not encoding-dependent. Anything
+    /// that needs padding to differ — `u = H(PAD(A) | PAD(B))` — is still
+    /// exercised, because srptools pads there too.
+    #[test]
+    fn matches_an_srptools_known_answer_vector() {
+        // B, as srptools' server computes it: B = (k*v + g^b) mod N.
+        const B_HEX: &str = "\
+            22406281fc7bd58511cfb9372cb51c424d4a3bddf6f76020b387b14fe2b05afb\
+            894c1e7d2fd851790d74b8ca58f06a88a02cf655060db2edb4516d3fd4e1c23b\
+            3440609b793895564839b9443f2937e51bfccbe0a56112cd9f67ed9f557b4404\
+            98df9ba204fe3a1abf6194468fbf5aadb10345adf9bf14a38c62eb878cc20015\
+            a6760d5482eabe66c579d0e3fdcc90d63e79e4087a37b38cd4a5734e386fee85\
+            921b3a17bd37a79ca1e564297661cf0c311b709c99a6a5f2048b10427a583dcb\
+            4a4c71e92d6fa2bf4f6ff492388030239298488bcb9ca6e4d8f0e5f6d78b4031\
+            96d29d6bf6f01b02a0472063b4cc20bb6000498d7fede6dc0671e92e6a79885d\
+            285755cbbd90bea08d10da1d3a23c02087fc81981996521261384c63dc08a3b2\
+            582f98f2d546e4c306656325d0fdb1fd54d008e3101d611fbdcb85caaa1dddb9\
+            e17304fc81f0070fc96c0dff7fd41f32364d471d894936feb7cf99662ef2d572\
+            fd3a4a41264f1f9e04c8f85b4651fce762200360dc90486e2ff5cb5b13667646";
+        // A = g^a mod N. Depends on every bit of N.
+        const A_HEX: &str = "\
+            f1de45b315e35d81306e723b241b0050ac5edd8125eeb647e1f92d9b912f152f\
+            ec7eedc9e8727075d20ca8912643cce335bab9404c130a807be98dbf2cc9d5f7\
+            e0fc1801ed222bf9c2e3c072aeaeeab3b67db6016e913ade78e303659d55986e\
+            387b5267b52c94dbffa12815d54e62bbec01f252d8c3d5e52e9c994dd93b996d\
+            6c83ab83f61898703c1d6e8b5c4701f8c3a50b172c76b6b71e2a0e74757f8f93\
+            df9889dfcd51fd976e69abbc4d5ef288900f9fbb1ee88f15d183d3eb6aa0f84e\
+            7e4e62f1fc0f8991e6eca6c5a6427ccb7d352a2f09166e7ee528bfd5c8f2c330\
+            571ef0d3e4bcd4d70899a9f4ab3e5f99c9dd6bdadb00648efd3b4c5c06ce61b1\
+            ef348ed218f9c180356bcfc943310ea3c464f994d189152b65534c09ba83984d\
+            d4754f4c6fcf3a9a7c0670f1dcc9d936e97164d1d23f4c82a2da56732aace97d\
+            85d0fa876d79f419b740e489b23bf5c46f6a954e418585ea93dbd20c44a0e67f\
+            a3bc1a968ac4ea9d3c3f8b572fccabc1cbc287ecdf07e6c9bad1804548e64b6b";
+        // K = H(S), the key every later HKDF derivation hangs off.
+        const K_HEX: &str = "\
+            4b9fd27ccb3cf819622dc6579658cc4d73e77e7f65d8c65e98cf4ddae4fe98ea\
+            ee3edb3bbcd2f6ec1817035a0a13f827bd6b4d3c19df5474a24527668aa13cc6";
+        // M1 = H(H(N) XOR H(g) | H(I) | s | A | B | K), the proof sent in M3.
+        const M1_HEX: &str = "\
+            68bfb13622e54efc5a3cc6663af00a292d3d5e4024d86d9c8dc261f7ece945c2\
+            8374df1abd6555502de39ea5acb00580f8f8b0743e72ee4bcc69b951f1b94679";
+        // M2 = H(A | M1 | K), the proof the accessory returns in M4.
+        const M2_HEX: &str = "\
+            99ab3d6381f24e123605781cd8169af9e5b6a2c1bd85c81d66467844840ee38d\
+            0770f94ba76d36c5ae206f01a53174f329a44b796fa837b8e5d94dddb9b40032";
+
+        let salt = [0x11u8; 16];
+        let a = BigUint::from_bytes_be(&[0x30u8; 32]);
+
+        let client = client_compute("Pair-Setup", "3939", &salt, &unhex(B_HEX), &a).unwrap();
+
+        assert_eq!(
+            client.public_a,
+            unhex(A_HEX),
+            "A disagrees with srptools — the group modulus or the generator differs"
+        );
+        assert_eq!(
+            client.session_key,
+            unhex(K_HEX),
+            "K disagrees — x, u, k, S or the encoding of S differs"
+        );
+        assert_eq!(
+            client.m1,
+            unhex(M1_HEX),
+            "M1 disagrees — the accessory would reject M3"
+        );
+        assert_eq!(
+            client.expected_m2,
+            unhex(M2_HEX),
+            "M2 disagrees — we would reject the accessory's M4"
+        );
+    }
+
+    /// Hex to bytes, ignoring the layout whitespace in the constants above.
+    fn unhex(s: &str) -> Vec<u8> {
+        let digits: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+        assert_eq!(digits.len() % 2, 0, "hex constant has an odd digit count");
+        digits
+            .chunks(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
+                    .expect("hex constant contains a non-hex digit")
+            })
+            .collect()
+    }
+
     #[test]
     fn wrong_pin_produces_a_different_proof() {
         let username = "Pair-Setup";

@@ -5,14 +5,20 @@ use std::sync::Arc;
 use gstreamer_app as gst_app;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use openplay_airplay::session::{AirPlaySession, SessionEvent as AirPlayEvent};
 use openplay_capture::CaptureSession;
 use openplay_miracast::session::{MiracastSession, SessionEvent as MiracastEvent};
 use openplay_pipeline::{
     probe_best_encoder, AirPlaySenderPipeline, CaptureConfig, EncoderType, MiracastSenderPipeline,
+    Role, SdpKind, SenderPipeline, WebRtcEvent, WebRtcPeer,
 };
+use openplay_protocol::{
+    Capabilities, RejectReason, Resolution, SessionEndReason, SignalingMessage,
+};
+use openplay_signaling::SignalingClient;
+use url::Url;
 
 /// Handle that allows signalling an active cast to stop.
 #[derive(Clone)]
@@ -349,7 +355,7 @@ async fn run_airplay_pipeline(
         }
         frame_count += 1;
         // `is_multiple_of` is stable only since 1.87; the workspace MSRV is 1.80.
-        if frame_count % 300 == 0 {
+        if frame_count.is_multiple_of(300) {
             info!(frame_count, "AirPlay streaming...");
         }
     }
@@ -582,6 +588,319 @@ fn find_nalu_starts(data: &[u8]) -> Vec<usize> {
     starts
 }
 
+// ─── OpenPlay (WebRTC) ────────────────────────────────────────────────────────
+
+/// Where to cast, the identity to hold the far end to, and who we say we are.
+///
+/// The fingerprint travels with the address because the two are only meaningful
+/// together: the receiver serves a self-signed certificate, so the fingerprint
+/// from its mDNS `fp` TXT key is the sole thing distinguishing it from any
+/// other host that answers on that address.
+#[derive(Debug, Clone)]
+pub struct OpenPlayTarget {
+    pub addr: SocketAddr,
+    pub fingerprint: String,
+    /// Shown in the approval prompt on the receiver's screen.
+    ///
+    /// This is the whole basis on which somebody decides to allow the cast, so
+    /// it comes from the user's configured display name rather than being
+    /// derived here — "OpenPlay Sender" for every device would make the
+    /// decision meaningless.
+    pub display_name: String,
+}
+
+/// Casts to an OpenPlay receiver over WebRTC.
+pub async fn start_openplay_cast(
+    target: OpenPlayTarget,
+    bitrate_kbps: u32,
+    framerate: u32,
+    force_sw_encode: bool,
+    tokio_handle: TokioHandle,
+    stop_handle: CastStopHandle,
+    status_callback: impl Fn(&str) + 'static,
+) {
+    status_callback("Starting screen capture...");
+
+    let capture = match CaptureSession::start().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(%e, "Screen capture failed");
+            status_callback(&format!("Capture failed: {e}"));
+            return;
+        }
+    };
+
+    let capture_config = make_capture_config(&capture, framerate);
+    info!(
+        width = capture_config.width,
+        height = capture_config.height,
+        "Capture session started"
+    );
+    status_callback("Connecting to OpenPlay receiver...");
+
+    let stop_flag = stop_handle.flag();
+    let result = tokio_handle
+        .spawn(async move {
+            run_openplay_pipeline(
+                target,
+                capture_config,
+                bitrate_kbps,
+                force_sw_encode,
+                stop_flag,
+            )
+            .await
+        })
+        .await;
+
+    // Every branch must end in a message containing one of "ended", "failed",
+    // "stopped" or "error": that substring is how the UI learns the cast is
+    // over, and without it the Stop button never goes away.
+    match result {
+        Ok(Ok(())) => status_callback("Casting ended"),
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            if msg.contains("stopped by user") {
+                status_callback("Casting stopped");
+            } else {
+                error!(%e, "OpenPlay casting failed");
+                status_callback(&format!("Casting failed: {e}"));
+            }
+        }
+        Err(e) => {
+            if e.is_cancelled() {
+                status_callback("Casting stopped");
+            } else {
+                error!(%e, "OpenPlay task panicked");
+                status_callback(&format!("Casting error: {e}"));
+            }
+        }
+    }
+}
+
+async fn run_openplay_pipeline(
+    target: OpenPlayTarget,
+    capture_config: CaptureConfig,
+    bitrate_kbps: u32,
+    force_sw_encode: bool,
+    stop_flag: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    let encoder_type = select_encoder(force_sw_encode);
+    info!(
+        encoder = encoder_type.factory_name(),
+        "Using encoder for OpenPlay"
+    );
+
+    let tls_config = openplay_crypto::client_config_pinned(&target.fingerprint)
+        .map_err(|e| anyhow::anyhow!("Receiver certificate is not usable: {e}"))?;
+
+    let addr = target.addr;
+    let url = Url::parse(&format!("wss://{addr}"))
+        .map_err(|e| anyhow::anyhow!("Bad receiver address {addr}: {e}"))?;
+
+    let (outgoing, mut incoming) = SignalingClient::new(url, tls_config)
+        .connect()
+        .await
+        .map_err(|e| anyhow::anyhow!("Could not reach the receiver: {e}"))?;
+
+    // Ask for a session and wait to be let in. The receiver shows the user a
+    // prompt, so this can sit here for as long as it takes somebody to walk
+    // over and press a button — there is deliberately no timeout.
+    outgoing
+        .send(SignalingMessage::SessionRequest {
+            sender_id: sender_id(),
+            display_name: sanitise_display_name(&target.display_name),
+            protocol_version: openplay_common::PROTOCOL_VERSION,
+            capabilities: Capabilities {
+                video_codecs: vec!["h264".to_string()],
+                audio_codecs: vec![],
+                max_resolution: Some(Resolution {
+                    width: capture_config.width,
+                    height: capture_config.height,
+                }),
+                max_framerate: Some(capture_config.framerate),
+                supports_cursor: true,
+            },
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Signaling closed before the session request was sent"))?;
+
+    wait_for_session_accept(&mut incoming, &stop_flag).await?;
+
+    // Only now is it worth touching the GPU.
+    let pipeline = SenderPipeline::new(&capture_config, encoder_type, bitrate_kbps)?;
+    if let Err(e) = pipeline.setup_bus_watch(openplay_pipeline::log_bus_message) {
+        warn!(%e, "Could not watch the sender pipeline bus");
+    }
+
+    let (webrtc_tx, mut webrtc_rx) = mpsc::unbounded_channel::<WebRtcEvent>();
+    let peer = WebRtcPeer::new(pipeline.webrtcbin(), Role::Offerer, webrtc_tx);
+
+    // Playing the pipeline is what makes webrtcbin ask for negotiation, which
+    // produces the offer.
+    pipeline.start()?;
+    info!("OpenPlay pipeline started — negotiating");
+
+    let outcome = drive_session(&peer, &outgoing, &mut incoming, &mut webrtc_rx, &stop_flag).await;
+
+    let _ = outgoing
+        .send(SignalingMessage::SessionEnd {
+            reason: SessionEndReason::UserStopped,
+        })
+        .await;
+    pipeline.stop()?;
+
+    outcome
+}
+
+/// Waits for the receiver to accept the session, or for the user to give up.
+///
+/// The receiver asks a human before answering, so the only bounds here are the
+/// user at the far end and the Stop button at this one.
+async fn wait_for_session_accept(
+    incoming: &mut mpsc::Receiver<SignalingMessage>,
+    stop_flag: &Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    loop {
+        if stop_flag.load(Ordering::Relaxed) {
+            return Err(anyhow::anyhow!("Casting stopped by user"));
+        }
+
+        tokio::select! {
+            message = incoming.recv() => match message {
+                Some(SignalingMessage::SessionAccept { receiver_id, negotiated }) => {
+                    info!(%receiver_id, codec = %negotiated.video_codec, "Session accepted");
+                    return Ok(());
+                }
+                Some(SignalingMessage::SessionReject { reason }) => {
+                    return Err(anyhow::anyhow!("{}", describe_rejection(&reason)));
+                }
+                Some(other) => {
+                    debug!(msg = ?std::mem::discriminant(&other), "Ignoring pre-session message");
+                }
+                None => return Err(anyhow::anyhow!("Receiver closed the connection")),
+            },
+            // Poll the stop flag on a timer as well as on message arrival: a
+            // receiver waiting on its consent prompt sends nothing at all, and
+            // Stop has to work during that silence.
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+        }
+    }
+}
+
+/// Turns a rejection into something worth showing a person.
+fn describe_rejection(reason: &RejectReason) -> String {
+    match reason {
+        RejectReason::Busy => "Receiver is already showing another device".to_string(),
+        RejectReason::VersionMismatch => {
+            "Receiver runs a different OpenPlay version — update both ends".to_string()
+        }
+        RejectReason::NoCompatibleCodecs => "Receiver does not support H.264".to_string(),
+        RejectReason::NotPaired => "This device is not paired with the receiver".to_string(),
+        RejectReason::Denied => "The person at the receiver declined the cast".to_string(),
+    }
+}
+
+/// Pumps SDP and ICE in both directions until the cast ends.
+async fn drive_session(
+    peer: &WebRtcPeer,
+    outgoing: &mpsc::Sender<SignalingMessage>,
+    incoming: &mut mpsc::Receiver<SignalingMessage>,
+    webrtc_rx: &mut mpsc::UnboundedReceiver<WebRtcEvent>,
+    stop_flag: &Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    loop {
+        if stop_flag.load(Ordering::Relaxed) {
+            info!("OpenPlay casting stopped by user");
+            return Err(anyhow::anyhow!("Casting stopped by user"));
+        }
+
+        tokio::select! {
+            event = webrtc_rx.recv() => {
+                let Some(event) = event else {
+                    return Err(anyhow::anyhow!("WebRTC event channel closed"));
+                };
+                match event {
+                    WebRtcEvent::LocalDescription { kind, sdp } => {
+                        if kind != SdpKind::Offer {
+                            warn!(?kind, "Sender produced a description that is not an offer");
+                            continue;
+                        }
+                        send_or_fail(outgoing, SignalingMessage::SdpOffer { sdp }).await?;
+                    }
+                    WebRtcEvent::IceCandidate { sdp_mline_index, candidate } => {
+                        send_or_fail(outgoing, SignalingMessage::IceCandidate {
+                            candidate,
+                            sdp_mid: None,
+                            sdp_mline_index: Some(sdp_mline_index),
+                        }).await?;
+                    }
+                    WebRtcEvent::IceGatheringComplete => {
+                        send_or_fail(outgoing, SignalingMessage::IceComplete).await?;
+                    }
+                    WebRtcEvent::Connected => info!("Media session connected — streaming"),
+                    WebRtcEvent::Disconnected => return Ok(()),
+                    WebRtcEvent::Failed(reason) => {
+                        return Err(anyhow::anyhow!("Media session failed: {reason}"));
+                    }
+                }
+            }
+
+            message = incoming.recv() => match message {
+                Some(SignalingMessage::SdpAnswer { sdp }) => {
+                    peer.set_remote_description(SdpKind::Answer, &sdp)
+                        .map_err(|e| anyhow::anyhow!("Receiver sent an unusable answer: {e}"))?;
+                }
+                Some(SignalingMessage::IceCandidate { candidate, sdp_mline_index, .. }) => {
+                    peer.add_ice_candidate(sdp_mline_index.unwrap_or(0), &candidate);
+                }
+                Some(SignalingMessage::IceComplete) => {
+                    debug!("Receiver finished gathering ICE candidates");
+                }
+                Some(SignalingMessage::SessionEnd { reason }) => {
+                    info!(?reason, "Receiver ended the session");
+                    return Ok(());
+                }
+                Some(other) => {
+                    debug!(msg = ?std::mem::discriminant(&other), "Unhandled signaling message");
+                }
+                None => return Err(anyhow::anyhow!("Receiver closed the connection")),
+            },
+
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+        }
+    }
+}
+
+async fn send_or_fail(
+    outgoing: &mpsc::Sender<SignalingMessage>,
+    message: SignalingMessage,
+) -> anyhow::Result<()> {
+    outgoing
+        .send(message)
+        .await
+        .map_err(|_| anyhow::anyhow!("Receiver closed the connection"))
+}
+
+/// Makes a configured name safe to put in a `SessionRequest`.
+///
+/// The receiver validates names and rejects the whole request if one is empty,
+/// over-long, or carries control characters — so trimming here turns a
+/// misconfigured name into a slightly shortened one rather than a cast that
+/// fails with an unexplained rejection.
+fn sanitise_display_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(openplay_protocol::MAX_NAME_CHARS)
+        .collect();
+
+    if cleaned.trim().is_empty() {
+        "OpenPlay Sender".to_string()
+    } else {
+        cleaned
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,5 +920,57 @@ mod tests {
         assert!(!h.is_stopped());
         h.stop();
         assert!(h.is_stopped());
+    }
+}
+
+/// A stable identifier for this install.
+///
+/// Nothing authenticates it today, so it is only useful for correlating log
+/// lines — but it must at least be stable across runs, because it is what a
+/// future paired-device store would key on.
+fn sender_id() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    openplay_common::data_dir().hash(&mut hasher);
+    format!("openplay-{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod openplay_tests {
+    use super::*;
+
+    #[test]
+    fn a_configured_name_is_passed_through_unchanged() {
+        assert_eq!(
+            sanitise_display_name("Sandeepa's Laptop"),
+            "Sandeepa's Laptop"
+        );
+    }
+
+    #[test]
+    fn an_empty_or_blank_name_falls_back_rather_than_being_rejected() {
+        assert_eq!(sanitise_display_name(""), "OpenPlay Sender");
+        assert_eq!(sanitise_display_name("   "), "OpenPlay Sender");
+    }
+
+    #[test]
+    fn control_characters_are_stripped_so_the_receiver_does_not_reject_us() {
+        assert_eq!(
+            sanitise_display_name("Laptop\nWARN forged"),
+            "LaptopWARN forged"
+        );
+    }
+
+    #[test]
+    fn an_over_long_name_is_trimmed_to_the_protocol_bound() {
+        let long = "n".repeat(openplay_protocol::MAX_NAME_CHARS + 50);
+        let out = sanitise_display_name(&long);
+        assert_eq!(out.chars().count(), openplay_protocol::MAX_NAME_CHARS);
+    }
+
+    #[test]
+    fn the_sender_id_is_stable_across_calls() {
+        assert_eq!(sender_id(), sender_id());
+        assert!(sender_id().starts_with("openplay-"));
     }
 }

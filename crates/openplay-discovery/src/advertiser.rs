@@ -33,11 +33,19 @@ impl ReceiverAdvertiser {
             SERVICE_TYPE,
             &txt_record.display_name,
             &host_name,
+            // No address is supplied here; `enable_addr_auto` below fills in
+            // every interface address at registration time instead.
             "",
             txt_record.port,
             &props[..],
         )
-        .map_err(|e| DiscoveryError::Registration(format!("Failed to create service info: {e}")))?;
+        .map_err(|e| DiscoveryError::Registration(format!("Failed to create service info: {e}")))?
+        // Without this the address set stays empty, and mdns-sd then refuses to
+        // announce the service or answer a browsing sender's query — silently,
+        // and after `register` has already returned Ok. A receiver that looks
+        // registered in its own log but is invisible to every sender is the
+        // result, so this call is load-bearing rather than an optimisation.
+        .enable_addr_auto();
 
         daemon.register(service).map_err(|e| {
             DiscoveryError::Registration(format!("Failed to register service: {e}"))

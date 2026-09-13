@@ -205,20 +205,33 @@ impl WifiDirectManager {
     }
 
     /// Disconnect from P2P group.
+    ///
+    /// `Disconnect` belongs to the P2PDevice interface — the same one `Connect`
+    /// was called on — and tearing the group down is what it does there. Asking
+    /// for it under [`WPA_INTERFACE`] instead named the root interface, which has
+    /// no such method on an interface object path, so every call came back
+    /// UnknownMethod. Swallowing that error and logging success on the next line
+    /// is how a group that was never torn down looked like one that was.
     pub async fn disconnect(&self) -> anyhow::Result<()> {
-        if let Some(ref interface_path) = self.p2p_interface_path {
-            let connection = zbus::Connection::system().await?;
-            let proxy = zbus::Proxy::new(
-                &connection,
-                WPA_SERVICE,
-                interface_path.as_str(),
-                WPA_INTERFACE,
-            )
-            .await?;
+        let Some(ref interface_path) = self.p2p_interface_path else {
+            return Ok(());
+        };
 
-            let _ = proxy.call_method("Disconnect", &()).await;
-            info!("P2P group disconnected");
-        }
+        let connection = zbus::Connection::system().await?;
+        let proxy = zbus::Proxy::new(
+            &connection,
+            WPA_SERVICE,
+            interface_path.as_str(),
+            WPA_P2P_INTERFACE,
+        )
+        .await?;
+
+        proxy
+            .call_method("Disconnect", &())
+            .await
+            .map_err(|e| anyhow::anyhow!("P2P Disconnect failed: {e}"))?;
+
+        info!("P2P group disconnected");
         Ok(())
     }
 }
@@ -756,6 +769,21 @@ async fn get_peer_ip_from_arp(interface_name: &str) -> anyhow::Result<IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn p2p_methods_are_not_addressed_to_the_root_interface() {
+        // Connect, StopFind and Disconnect are all P2PDevice methods on an
+        // *interface* object path. Naming the root interface on that path — the
+        // two constants differ by a suffix, so it is an easy slip — answers
+        // UnknownMethod for every one of them, and nothing about the call site
+        // looks wrong afterwards.
+        assert_eq!(WPA_INTERFACE, "fi.w1.wpa_supplicant1");
+        assert_eq!(
+            WPA_P2P_INTERFACE,
+            "fi.w1.wpa_supplicant1.Interface.P2PDevice"
+        );
+        assert_ne!(WPA_INTERFACE, WPA_P2P_INTERFACE);
+    }
 
     #[test]
     fn test_build_wfd_ie() {

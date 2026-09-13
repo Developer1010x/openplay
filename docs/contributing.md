@@ -16,6 +16,14 @@ cd openplay
 cargo build
 ```
 
+One dependency will bite you at *test* time rather than build time: the `nice`
+GStreamer plugin. `crates/openplay-pipeline/tests/webrtc_loopback.rs` asserts it
+is installed before doing anything, because without it `webrtcbin` builds fine
+and then refuses every pad request. Check with `gst-inspect-1.0 nice`, and
+install `gstreamer1.0-nice` (Debian/Ubuntu), `libnice-gstreamer1` (Fedora) or
+`libnice` (Arch) if it is missing. See
+[install.md](install.md#the-nice-plugin-specifically).
+
 ## The commands CI runs
 
 Run these before pushing. CI runs the same commands, but split across jobs:
@@ -50,18 +58,58 @@ cargo test -p openplay-protocol test_serialize_session_request   # single test
 cargo clippy -p openplay-miracast --all-targets --all-features -- -D warnings
 ```
 
+The two integration tests that cover the OpenPlay path end to end are worth
+knowing by name, because they are the only thing standing in for a second
+machine:
+
+```bash
+cargo test -p openplay-signaling --test loopback      # TLS + WebSocket + framing
+cargo test -p openplay-pipeline  --test webrtc_loopback   # two webrtcbins, real frames
+```
+
+The second needs GStreamer at runtime, including the `nice` plugin. The first
+needs neither.
+
 ## CI jobs
 
 | Job | Runs on | Covers |
 |---|---|---|
 | `Check & Lint` | ubuntu-24.04 | `fmt --check`, then `clippy -D warnings` |
 | `Test (ubuntu-24.04)` | ubuntu-24.04 | `cargo test --all` |
-| `Cross-platform check (macos-14 / windows-2022)` | macos-14, windows-2022 | `cargo check --all-targets` on the eight crates that need no system packages |
-| `Build Release` | ubuntu-24.04 | `cargo build --release`, uploads binaries |
+| `Cross-platform check (macos-14 / windows-2022)` | macos-14, windows-2022 | `cargo check --locked --all-targets` on the portable crates |
+| `MSRV (1.88.0)` | ubuntu-24.04 | `cargo check --locked --all-targets` on the same crates, on the oldest toolchain that can build them |
+| `Build Release` | ubuntu-24.04 | `cargo build --release`, uploads binaries and the `.deb` |
 
-The cross-platform job covers `openplay-common`, `-protocol`, `-crypto`,
-`-capture`, `-discovery`, `-signaling`, `-airplay` and `-miracast` — everything
-that builds without GStreamer or PipeWire.
+The cross-platform and MSRV jobs share one crate selection, expressed as
+`--workspace --exclude openplay-pipeline --exclude openplay-sender --exclude
+openplay-receiver` rather than as a list of names. That matters: a **new crate
+is covered automatically**, and only a crate that needs GStreamer or PipeWire
+should ever be added to the exclusions. Today the selection is
+`openplay-common`, `-protocol`, `-crypto`, `-capture`, `-discovery`,
+`-signaling`, `-airplay` and `-miracast`. The MSRV job needs no system packages
+at all, which makes it the cheapest job here.
+
+**The Linux jobs' system packages come from `.github/actions/linux-deps`, and it
+installs two kinds of package that are not interchangeable.** A `-dev` package
+supplies the pkg-config file and headers a `*-sys` crate links against; the
+runtime plugin package supplies the `.so` GStreamer loads from its registry.
+Neither substitutes for the other, and `libgstreamer-plugins-bad1.0-dev` and
+`gstreamer1.0-plugins-bad` really are different packages with the same job on
+opposite sides of the divide.
+
+So there are two things to check whenever `openplay-pipeline` changes: that the
+action installs headers for every `gstreamer-*` binding a crate declares, and
+that it installs the runtime plugins any test calling `gstreamer::init()` will
+look for. A missing `-dev` package fails the build; a missing plugin fails at
+`ElementFactory::make()` with a `MissingElement` error, which is the failure that
+passes on your machine and not on CI, or the reverse. The action's header
+comment records which element comes from which package and why each is there —
+read it before adding or removing a line.
+
+`docs/install.md` and that list answer different questions and must not be
+trimmed to match each other: this file's list is what CI needs to compile and
+run `cargo test --all`, while `install.md` is what a user needs to *run* the
+app, which is more.
 
 `openplay-pipeline`, `-sender` and `-receiver` need GStreamer and are **only
 built on Linux**. If you change platform-gated code in those three, CI will not
@@ -110,9 +158,18 @@ the `force_sw_encode` config flag, handled in `select_encoder()`.
 **Config is validated after CLI overrides**, not only at load. If you add a flag
 that overrides a config field, make sure `validate()` still runs after it.
 
-**The MSRV is real.** Every crate inherits `rust-version` from the workspace, so
-clippy fails the build on anything stabilised after 1.80. Adding the inheritance
-immediately caught a use of `is_multiple_of`, stable only since 1.87.
+**The MSRV is real, and it is 1.88 — not the 1.80 in `Cargo.toml`.** Every crate
+inherits `rust-version` from the workspace, and that field says 1.80, but 1.80
+cannot build this workspace at all: cargo refuses at resolution, before
+compiling anything, because `zvariant_utils` needs the `edition2024` cargo
+feature (1.85+) and `time` and the `zbus` 5.x crates require 1.87–1.88. The
+number CI enforces is the `1.88.0` pinned in the `MSRV` job, and the header
+comment on that job records exactly what fails at each older version.
+
+Two consequences. Do not treat the clippy MSRV lint as your floor — it is
+checking against a version the project cannot actually build with. And if you
+correct `rust-version` in the root manifest, move the CI pin with it, in the
+same change.
 
 ## Testing crypto
 
@@ -131,18 +188,31 @@ implementation, do not invent one. Leave it unimplemented with a warning.
 
 ## Areas where help is useful
 
-- Wiring the OpenPlay/WebRTC path to the two binaries. The receiver is currently
-  a window with a single dependency, so this is close to greenfield
-- Receiving AirPlay on Linux — see
-  [airplay-receiver-design.md](airplay-receiver-design.md)
-- macOS and Windows screen capture backends
-- AirPlay and Miracast receiver support
+The single most valuable contribution right now needs no Rust at all: **run a
+cast and report what happened.** Every protocol path in this repository is
+connected and none has a confirmed success in the field.
+
+- Running an OpenPlay cast between two real machines and reporting the result.
+  It is covered by loopback tests and nothing else
+- Testing against real AirPlay and Miracast hardware — no test in this repo can
+  substitute for a dongle or an Apple TV
 - Confirming AirPlay HAP pairing against real hardware — one `pair_probe` run,
   see [#27](https://github.com/Developer1010x/openplay/issues/27)
+- Pairing for OpenPlay, so the receiver's consent prompt is backed by an
+  identity rather than by an unauthenticated mDNS record. The
+  `PairingChallenge` / `PairingResponse` / `PairingConfirm` messages are already
+  defined and unused; see [crypto.md](crypto.md#what-pinning-does-and-does-not-buy)
+- Wiring `SenderStateMachine` and `ReceiverStateMachine` into the two session
+  loops, which currently enforce ordering by hand
+- Audio, of which there is none anywhere
+- macOS and Windows screen capture backends. Start with
+  `query_primary_display_size()` in `openplay-capture/src/desktop.rs`, whose
+  macOS branch is an empty block that silently yields 1920x1080
+- AirPlay and Miracast receiver support
+- Receiving AirPlay on Linux — see
+  [airplay-receiver-design.md](airplay-receiver-design.md)
+- Packaging (Flatpak, Homebrew, Winget, AUR)
 
 **Not** useful: porting Apple's FairPlay key tables. That was considered and
 declined — see [crypto.md](crypto.md#fairplay--not-fixed). A PR adding them will
 be closed, so please do not spend time on it.
-- Testing against real AirPlay and Miracast hardware — genuinely valuable, since
-  no test in this repo can substitute
-- Packaging (Flatpak, Homebrew, Winget, AUR)

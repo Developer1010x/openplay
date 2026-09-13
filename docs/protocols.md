@@ -1,6 +1,8 @@
 # Protocols
 
-Three casting paths, in decreasing order of how well they work today.
+Three casting paths. All three are connected to the binaries; none of them has a
+confirmed success against the hardware or second machine it is aimed at, so the
+"State" column below describes evidence, not confidence.
 
 All three are **video only**. Nothing in the workspace captures or transmits
 audio, even where the protocol layer advertises it — see
@@ -8,15 +10,20 @@ audio, even where the protocol layer advertises it — see
 
 | Protocol | Discovery | Session setup | Transport | State |
 |---|---|---|---|---|
-| Miracast | mDNS + Wi-Fi Direct | RTSP M1–M7 | RTP/MPEG2-TS over UDP | Works |
-| AirPlay | mDNS `_airplay._tcp` | HTTP/plist + HAP | Mirror stream (TCP) | Pairing unconfirmed; FairPlay not wired in |
-| OpenPlay | mDNS `_openplay._tcp` | WebSocket signaling | WebRTC | Sender browses; everything else is libraries only |
+| OpenPlay | mDNS `_openplay._tcp` | TLS WebSocket signaling + consent prompt | WebRTC | Wired both ends, covered by loopback tests; never run between two machines |
+| Miracast | mDNS + Wi-Fi Direct | RTSP M1–M7, then a control channel held open | RTP/MPEG2-TS over UDP | Wired end to end; never verified against a real sink |
+| AirPlay | mDNS `_airplay._tcp` | HTTP/plist + HAP | Mirror stream (TCP) | Pairing unconfirmed against hardware; FairPlay not wired in and will not be |
 
 ---
 
 ## Miracast / Wi-Fi Display
 
-The most complete path.
+The most fully specified path, and the least evidenced: nothing in this
+repository has ever been confirmed to drive a real Miracast sink. Treat a cast
+that fails as an OpenPlay bug until proven otherwise — that is not politeness,
+it is the base rate. A defect that ended every cast within milliseconds of a
+successful M1–M7 lived here undetected, because passing the handshake looks like
+success in a log and nobody was watching a screen.
 
 ### Discovery
 
@@ -66,6 +73,22 @@ Video format negotiation lives in `wfd_params.rs` (`WfdVideoFormats`). On
 success the session emits `SessionEvent::Ready` with the agreed resolution,
 framerate and RTP port, and `MiracastSenderPipeline` starts streaming
 H.264 in MPEG2-TS over RTP/UDP.
+
+### After M7: the control channel is the session
+
+Media goes out over UDP, which tells the sink nothing about whether the source
+is still there. The session therefore lives on the RTSP connection, and
+`serve_control_channel` holds it open for the whole cast: it answers what the
+sink asks, pings on a keepalive timer when the sink has been silent, and returns
+only when the sink ends the session or the connection breaks.
+
+This is the part to be careful with when editing `run_session`, because the
+failure is silent and looks like the sink's fault. **Returning early by any
+route ends the cast**, not only by sending `Ended`: dropping `conn` shows the
+sink a FIN on a session it was promised a timeout on, and dropping `evt_tx`
+closes the channel, which the casting loop's select reads as `None` and treats
+exactly like an `Ended`. An earlier version of this code sent `Ended` on the
+line after `Ready` and every cast died in milliseconds.
 
 ---
 
@@ -138,12 +161,51 @@ own unit tests calls them — pairings are not actually persisted between runs.
 
 ## OpenPlay (WebRTC)
 
-The native protocol. Treat this section as a design description.
+The native protocol, and the only one where both ends are OpenPlay.
 
-`openplay-protocol` is implemented and well tested. `openplay-signaling` has no
-tests at all, and the WebRTC pipelines are only covered at the config/encoder
-level. Neither binary calls any of it, except that the sender does browse for
-`_openplay._tcp.local.` — a service nothing advertises.
+Both binaries drive it: `receiver/src/net.rs` advertises, listens, prompts for
+consent and answers; `sender/src/casting.rs` browses, pins, requests a session
+and offers. `openplay-protocol` is well tested, `openplay-signaling` is covered
+by a loopback TLS test, and `openplay-pipeline` has a test in which two
+`webrtcbin`s negotiate and carry real decoded frames. What does **not** exist is
+a report of it working between two separate machines. See
+[architecture.md](architecture.md#the-openplaywebrtc-path) for the call path and
+for what the tests do and do not exercise.
+
+### Message flow as implemented
+
+The design below has a pairing/authentication phase. The code does not.
+
+```
+sender                                           receiver
+  │                                                 │
+  │  (browses _openplay._tcp, reads addr + fp)      │  (advertises, fp in TXT)
+  │                                                 │
+  │────── TLS handshake, cert pinned to fp ────────▶│
+  │────── SessionRequest ──────────────────────────▶│
+  │                                                 │  ⟵ human presses Allow
+  │◀───── SessionAccept { negotiated } ─────────────│
+  │                                                 │
+  │────── SdpOffer ────────────────────────────────▶│  builds ReceiverPipeline,
+  │◀───── SdpAnswer ────────────────────────────────│  starts it, then answers
+  │◀──┬── IceCandidate (trickle, both ways) ───┬───▶│
+  │   └── IceComplete ────────────────────────┘     │
+  │                                                 │
+  │═════════ H.264 over webrtcbin ═════════════════▶│  decode → RGBA → egui
+  │                                                 │
+  │────── SessionEnd ──────────────────────────────▶│
+```
+
+Rejections a sender can receive: `VersionMismatch` (protocol versions differ),
+`NoCompatibleCodecs` (the sender did not offer H.264), `Busy` (the receiver is
+already showing another device), and `Denied` (the person pressed Deny).
+`NotPaired` is defined and never sent, because there is no pairing.
+
+Not shown, because they are implemented but incidental: `Ping`/`Pong`, where the
+receiver answers with a real clock reading rather than echoing the sender's
+timestamp — an echo would make every clock-offset calculation come out as
+exactly `-rtt/2`, a plausible-looking number that is always wrong and that no
+test would catch.
 
 ### Wire format
 
@@ -190,17 +252,45 @@ Receiver: Idle → Advertising → PendingConnection → Pairing ─┐
 `SignalingMessage` to the event that should drive the machine, so transport and
 state logic stay separate.
 
-### What is missing
+**Neither machine is wired up.** `SenderStateMachine` and `ReceiverStateMachine`
+have no callers in either binary or in `openplay-signaling`; the two session
+loops enforce their own ordering directly instead — the receiver by matching on
+message plus current state in `net.rs`, the sender by its
+`wait_for_session_accept` → `drive_session` sequence. Using them would be an
+improvement, not a rewrite.
 
-The transport and state layers are done. The glue is not:
+### Transport security
 
-- `sender/src/app.rs` — the `Protocol::OpenPlay` match arm sets a status string
-  and clears `is_casting`
-- `receiver/src/window.rs` — a static "waiting for a sender" page
-- `CertificateManager` is never constructed outside its own tests, so the
-  identity the signaling layer expects is not generated. `openplay-crypto` no
-  longer even depends on `rustls` — it only produces the certificate, and
-  nothing consumes it
+The signaling channel is TLS from the first byte. The receiver serves
+`CertificateManager::server_config()`; the sender builds
+`client_config_pinned(fingerprint)` from the `fp` TXT key and refuses to connect
+at all if the receiver advertised no fingerprint.
 
-`SenderPipeline`, `ReceiverPipeline`, `SignalingServer`, `SignalingClient` and
-`ReceiverAdvertiser` all exist and have no callers in either binary.
+Both ends deviate from webpki's usual path because there is nothing to chain to:
+the certificate is self-signed and the address is a bare LAN IP, so there is no
+CA and no hostname to match. The pin replaces both.
+
+**Pinning is not authentication**, and `openplay-crypto/src/tls.rs` says so in
+its own module docs. The TXT record is unauthenticated, so an attacker on the
+LAN can advertise a receiver carrying their own fingerprint, and a sender that
+has never seen the real one will pin the attacker's certificate quite happily.
+What pinning buys is confidentiality against a passive eavesdropper, and
+detection of a *substituted* certificate on any later connection.
+
+Real authentication is what the `PairingChallenge` / `PairingResponse` /
+`PairingConfirm` messages above are for — a code confirmed on both screens.
+Those messages are defined and **nothing sends or handles them**. Until they
+exist, the receiver's consent prompt is the only thing standing between a
+stranger on the network and the screen; see
+[architecture.md](architecture.md#consent-is-the-security-model).
+
+### What is still missing
+
+- **Pairing and authentication.** The messages are defined; no code path uses
+  them. `RejectReason::NotPaired` is therefore never sent.
+- **Renegotiation.** A second `SdpOffer` on an established session is logged and
+  ignored.
+- **Audio.** `Capabilities` advertises Opus by default; the pipelines are
+  video-only, and the receiver negotiates `audio_codec: None`.
+- **A cross-machine run.** Everything above is exercised in one process, over
+  loopback, against a `videotestsrc` stand-in for the real capture pipeline.

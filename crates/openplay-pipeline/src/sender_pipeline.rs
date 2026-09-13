@@ -72,12 +72,36 @@ impl SenderPipeline {
             .build()
             .map_err(|e| PipelineError::MissingElement(format!("h264 capsfilter: {e}")))?;
 
+        // `aggregate-mode` is a GEnum. Setting it with `.property(_, 1i32)`
+        // panics inside `.build()` — "can't be set from the given type" — so it
+        // has to go through `property_from_str`.
         let rtppay = gst::ElementFactory::make("rtph264pay")
             .property("config-interval", -1i32)
-            .property("aggregate-mode", 1i32)
+            .property_from_str("aggregate-mode", "zero-latency")
             .property("mtu", 1200u32)
+            .property("pt", 96u32)
             .build()
             .map_err(|e| PipelineError::MissingElement(format!("rtph264pay: {e}")))?;
+
+        // Without fixed RTP caps the payloader offers `payload` as a *range*,
+        // and webrtcbin cannot build an m-line from unfixed caps: `create-offer`
+        // then succeeds and returns an SDP with no media section at all. That
+        // is the quietest way to get a session that negotiates and carries no
+        // video, so these four fields are mandatory — and their types are load
+        // bearing (`payload` and `clock-rate` are gint, `encoding-name` is
+        // upper-case).
+        let rtp_caps = gst::ElementFactory::make("capsfilter")
+            .property(
+                "caps",
+                gst::Caps::builder("application/x-rtp")
+                    .field("media", "video")
+                    .field("encoding-name", "H264")
+                    .field("payload", 96i32)
+                    .field("clock-rate", 90000i32)
+                    .build(),
+            )
+            .build()
+            .map_err(|e| PipelineError::MissingElement(format!("rtp capsfilter: {e}")))?;
 
         let rtp_queue = gst::ElementFactory::make("queue")
             .name("rtp_queue")
@@ -101,6 +125,7 @@ impl SenderPipeline {
                 &encoder,
                 &h264_caps,
                 &rtppay,
+                &rtp_caps,
                 &rtp_queue,
                 &webrtcbin,
             ])
@@ -113,6 +138,7 @@ impl SenderPipeline {
             &encoder,
             &h264_caps,
             &rtppay,
+            &rtp_caps,
             &rtp_queue,
         ])
         .map_err(|e| PipelineError::Gstreamer(format!("Failed to link elements: {e}")))?;
@@ -120,9 +146,10 @@ impl SenderPipeline {
         let rtp_queue_src = rtp_queue
             .static_pad("src")
             .context("No src pad on rtp_queue")?;
-        let webrtc_sink = webrtcbin
-            .request_pad_simple("sink_%u")
-            .context("Failed to request webrtcbin sink pad")?;
+        let webrtc_sink = webrtcbin.request_pad_simple("sink_%u").context(
+            "webrtcbin refused a sink pad. This is what a missing libnice plugin \
+             looks like — install gstreamer1.0-nice and check `gst-inspect-1.0 nicesrc`",
+        )?;
         rtp_queue_src
             .link(&webrtc_sink)
             .map_err(|e| PipelineError::Gstreamer(format!("Failed to link to webrtcbin: {e}")))?;

@@ -1,7 +1,8 @@
 use openplay_protocol::{
     receiver_event_from_message, sender_event_from_message, BitrateHintReason, Capabilities,
     NegotiatedParams, ReceiverEvent, ReceiverStateMachine, RejectReason, Resolution, SenderEvent,
-    SenderState, SenderStateMachine, SessionEndReason, SignalingMessage,
+    SenderState, SenderStateMachine, SessionEndReason, SignalingMessage, MAX_CANDIDATE_BYTES,
+    MAX_CODECS, MAX_NAME_CHARS, MAX_SDP_BYTES,
 };
 
 // ── Message serialization ──────────────────────────────────────────────────────
@@ -375,4 +376,129 @@ fn receiver_event_none_for_pairing_response() {
         pin_proof: "p".to_string(),
     };
     assert_eq!(receiver_event_from_message(&msg), None);
+}
+
+// ─── Message validation ───────────────────────────────────────────────────────
+//
+// `validate` is the boundary between the network and everything that trusts a
+// message. Serde checks a message's shape but not its size, and every String
+// and Vec here is attacker-controlled, so these bounds are load-bearing rather
+// than cosmetic.
+
+fn request_with_name(name: &str) -> SignalingMessage {
+    SignalingMessage::SessionRequest {
+        sender_id: "sender".to_string(),
+        display_name: name.to_string(),
+        protocol_version: 1,
+        capabilities: Capabilities::default(),
+    }
+}
+
+#[test]
+fn validate_accepts_an_ordinary_session_request() {
+    assert!(request_with_name("Living Room TV").validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_an_over_long_display_name() {
+    let name = "n".repeat(MAX_NAME_CHARS + 1);
+    let err = request_with_name(&name).validate().unwrap_err();
+    assert!(
+        err.to_string().contains("display_name"),
+        "the error should name the offending field: {err}"
+    );
+}
+
+#[test]
+fn validate_accepts_a_display_name_of_exactly_the_limit() {
+    let name = "n".repeat(MAX_NAME_CHARS);
+    assert!(request_with_name(&name).validate().is_ok());
+}
+
+#[test]
+fn validate_counts_characters_not_bytes() {
+    // A multi-byte name at the character limit is well within any byte limit,
+    // so a byte-based check would wrongly accept far longer names — and a
+    // grapheme-length UI would then disagree with the protocol.
+    let name = "é".repeat(MAX_NAME_CHARS);
+    assert!(name.len() > MAX_NAME_CHARS, "precondition: multi-byte");
+    assert!(request_with_name(&name).validate().is_ok());
+
+    let too_long = "é".repeat(MAX_NAME_CHARS + 1);
+    assert!(request_with_name(&too_long).validate().is_err());
+}
+
+#[test]
+fn validate_rejects_an_empty_display_name() {
+    assert!(request_with_name("").validate().is_err());
+}
+
+#[test]
+fn validate_rejects_control_characters_in_a_name() {
+    // A newline in a name forges lines in the receiver's structured log.
+    let err = request_with_name("Living Room\nWARN forged")
+        .validate()
+        .unwrap_err();
+    assert!(err.to_string().contains("control"), "{err}");
+}
+
+#[test]
+fn validate_rejects_an_oversized_sdp() {
+    let sdp = "v".repeat(MAX_SDP_BYTES + 1);
+    assert!(SignalingMessage::SdpOffer { sdp: sdp.clone() }
+        .validate()
+        .is_err());
+    assert!(SignalingMessage::SdpAnswer { sdp }.validate().is_err());
+}
+
+#[test]
+fn validate_accepts_a_realistic_sdp() {
+    let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n".to_string();
+    assert!(SignalingMessage::SdpOffer { sdp }.validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_an_oversized_ice_candidate() {
+    let candidate = "c".repeat(MAX_CANDIDATE_BYTES + 1);
+    let msg = SignalingMessage::IceCandidate {
+        candidate,
+        sdp_mid: None,
+        sdp_mline_index: Some(0),
+    };
+    assert!(msg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_too_many_codecs() {
+    let msg = SignalingMessage::SessionRequest {
+        sender_id: "sender".to_string(),
+        display_name: "Sender".to_string(),
+        protocol_version: 1,
+        capabilities: Capabilities {
+            video_codecs: vec!["h264".to_string(); MAX_CODECS + 1],
+            ..Capabilities::default()
+        },
+    };
+    assert!(msg.validate().is_err());
+}
+
+#[test]
+fn validate_passes_messages_that_carry_no_unbounded_fields() {
+    // These have nothing to bound, and must not be rejected by accident.
+    for msg in [
+        SignalingMessage::IceComplete,
+        SignalingMessage::Ping { timestamp_ms: 1 },
+        SignalingMessage::Pong {
+            timestamp_ms: 1,
+            receiver_timestamp_ms: 2,
+        },
+        SignalingMessage::SessionEnd {
+            reason: SessionEndReason::UserStopped,
+        },
+        SignalingMessage::SessionReject {
+            reason: RejectReason::Busy,
+        },
+    ] {
+        assert!(msg.validate().is_ok(), "{msg:?} should validate");
+    }
 }

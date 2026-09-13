@@ -10,9 +10,14 @@ description = "GStreamer pipeline construction and management for OpenPlay"
 [dependencies]
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
+gstreamer-webrtc = { workspace = true }
+gstreamer-sdp = { workspace = true }
+gstreamer-video = { workspace = true }
+tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true }
