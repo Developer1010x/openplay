@@ -150,9 +150,9 @@ async fn run_session(
             info!("AirPlay negotiation complete (no auth required)");
             n
         }
-        Err(AirPlayError::Negotiation(ref msg)) if wants_authentication(msg) => {
+        Err(ref e) if should_retry_with_pairing(e) => {
             // Server requires authentication — try HAP pairing
-            info!("Receiver requires authentication, attempting HAP pairing");
+            info!(%e, "Receiver requires authentication, attempting HAP pairing");
             negotiate_with_auth(receiver_addr, &params).await?
         }
         Err(e) => return Err(e),
@@ -205,38 +205,34 @@ async fn run_session(
     Ok(())
 }
 
-/// Whether an unauthenticated `POST /stream` failure is worth retrying behind
-/// pairing.
+/// Whether a failed unauthenticated `POST /stream` should be retried through
+/// HAP pairing.
 ///
-/// This was `msg.contains("501") || msg.contains("403")`, which missed the
-/// statuses real receivers actually answer with. A Mac with AirPlay Receiver
-/// set to *Everyone* and no password returns **404** — the legacy AirPlay 1
-/// endpoint simply does not exist there — and one with a password returns
-/// **470**. Neither matched, so casting gave up without ever attempting to
-/// pair, while `pair_probe` reached M4 happily by calling pair-setup directly.
+/// Only a typed [`AirPlayError::HttpStatus`] qualifies, and only these codes.
+/// Observed from real receivers:
 ///
-/// The code is read from the **status line only**. Substring-matching the whole
-/// message cannot work: `AirPlayError::Negotiation` carries the entire header
-/// block, so `Content-Length: 1401` in a permanent `500` would be read as a
-/// `401` and provoke a full SRP-6a pair-setup against a receiver that was never
-/// going to authenticate. `Server: AirTunes/470.x` does the same. Anything past
-/// the first line is a header, and headers are full of digits.
-fn wants_authentication(msg: &str) -> bool {
-    matches!(status_code(msg), Some(401 | 403 | 404 | 470 | 501))
-}
-
-/// Extracts the HTTP status code from a message whose first line is a status
-/// line, e.g. `POST /stream failed: HTTP/1.1 404 Not Found`.
+/// | Receiver state                                | Status   |
+/// |-----------------------------------------------|----------|
+/// | Mac, AirPlay Receiver = Everyone, no password | 404      |
+/// | Mac, Require Password on                      | 470      |
+/// | Receiver behind HTTP Digest                   | 401      |
+/// | The original two the fallback was written for | 403, 501 |
 ///
-/// Returns `None` for anything that is not a status line at all — a connection
-/// error, a timeout — so those never provoke a retry.
-fn status_code(msg: &str) -> Option<u16> {
-    let status_line = msg.lines().next()?;
-    let after_version = status_line
-        .split("HTTP/1.1")
-        .nth(1)
-        .or_else(|| status_line.split("HTTP/1.0").nth(1))?;
-    after_version.split_whitespace().next()?.parse().ok()
+/// A connection error, a timeout, or a response whose first line is not a
+/// status line never provoke a retry: none of those is an `HttpStatus`, so
+/// there is no text for a number to be mis-read out of. That is the whole
+/// reason the code is carried as a field rather than parsed back out of a
+/// message — `Content-Length: 1401` in a permanent 500 once read as a 401 and
+/// provoked a full SRP-6a pair-setup against a receiver that was never going
+/// to authenticate.
+fn should_retry_with_pairing(err: &AirPlayError) -> bool {
+    matches!(
+        err,
+        AirPlayError::HttpStatus {
+            code: 401 | 403 | 404 | 470 | 501,
+            ..
+        }
+    )
 }
 
 /// Negotiate AirPlay connection with authentication.
@@ -336,11 +332,11 @@ async fn negotiate_with_auth(
         .map_err(|e| AirPlayError::Negotiation(format!("Encrypted POST /stream failed: {e}")))?;
 
     let status = String::from_utf8_lossy(&response);
-    let status_line = status.lines().next().unwrap_or("<no status line>");
-    if !status_line.contains("200") {
-        return Err(AirPlayError::Negotiation(format!(
-            "POST /stream over the encrypted channel returned: {status_line}"
-        )));
+    if !http_session::status_is_success(&status) {
+        return Err(http_session::http_failure(
+            "POST /stream over the encrypted channel",
+            &status,
+        ));
     }
 
     info!("POST /stream accepted over the encrypted control channel");
@@ -363,19 +359,21 @@ async fn negotiate_with_auth(
 
 #[cfg(test)]
 mod auth_fallback_tests {
-    use super::{status_code, wants_authentication};
+    use super::should_retry_with_pairing;
+    use crate::http_session::http_failure;
+    use crate::AirPlayError;
 
-    /// What `AirPlayError::Negotiation` actually carries: the whole header
-    /// block, not just the status line. Every test below uses this shape,
-    /// because the single-line strings the first version of these tests used
-    /// were the reason the header-matching bug survived them.
-    fn negotiation_failure(status_line: &str, headers: &[&str]) -> String {
-        let mut msg = format!("POST /stream failed: {status_line}");
+    /// The error `post_stream` produces for a response, built from the full
+    /// header block — the shape production sees, not a one-line string. The
+    /// single-line strings the first version of these tests used were the
+    /// reason the header-matching bug survived them.
+    fn failure(status_line: &str, headers: &[&str]) -> AirPlayError {
+        let mut block = status_line.to_string();
         for header in headers {
-            msg.push_str("\r\n");
-            msg.push_str(header);
+            block.push_str("\r\n");
+            block.push_str(header);
         }
-        msg
+        http_failure("POST /stream", &block)
     }
 
     /// The statuses observed from real receivers that the original
@@ -383,21 +381,18 @@ mod auth_fallback_tests {
     #[test]
     fn retries_on_statuses_real_receivers_actually_send() {
         assert!(
-            wants_authentication(&negotiation_failure(
+            should_retry_with_pairing(&failure(
                 "HTTP/1.1 404 Not Found",
                 &["Content-Length: 0", "Server: AirTunes/950.7.1"]
             )),
             "a Mac set to Everyone with no password answers 404"
         );
         assert!(
-            wants_authentication(&negotiation_failure(
-                "HTTP/1.1 470 ",
-                &["Content-Length: 32"]
-            )),
+            should_retry_with_pairing(&failure("HTTP/1.1 470 ", &["Content-Length: 32"])),
             "a Mac with Require Password answers 470"
         );
         assert!(
-            wants_authentication(&negotiation_failure(
+            should_retry_with_pairing(&failure(
                 "HTTP/1.1 401 Unauthorized",
                 &["WWW-Authenticate: Digest realm=\"airplay\""]
             )),
@@ -407,47 +402,45 @@ mod auth_fallback_tests {
 
     #[test]
     fn still_retries_on_the_original_two() {
-        assert!(wants_authentication(&negotiation_failure(
+        assert!(should_retry_with_pairing(&failure(
             "HTTP/1.1 501 Not Implemented",
             &["Content-Length: 0"]
         )));
-        assert!(wants_authentication(&negotiation_failure(
+        assert!(should_retry_with_pairing(&failure(
             "HTTP/1.1 403 Forbidden",
             &["Content-Length: 0"]
         )));
     }
 
-    /// The regression this rewrite exists for.
-    ///
     /// Every one of these is a permanent failure whose *headers* contain a
-    /// retryable code. Substring-matching the message provoked a full SRP-6a
-    /// pair-setup against a receiver that was never going to authenticate, and
-    /// replaced an accurate error with a misleading pairing one.
+    /// retryable code. Substring-matching the message once provoked a full
+    /// SRP-6a pair-setup against a receiver that was never going to
+    /// authenticate.
     #[test]
     fn a_retryable_code_inside_a_header_does_not_trigger_a_retry() {
         assert!(
-            !wants_authentication(&negotiation_failure(
+            !should_retry_with_pairing(&failure(
                 "HTTP/1.1 500 Internal Server Error",
                 &["Content-Length: 1401", "Connection: close"]
             )),
             "Content-Length: 1401 contains 401"
         );
         assert!(
-            !wants_authentication(&negotiation_failure(
+            !should_retry_with_pairing(&failure(
                 "HTTP/1.1 400 Bad Request",
                 &["Content-Length: 404"]
             )),
             "Content-Length: 404 contains 404"
         );
         assert!(
-            !wants_authentication(&negotiation_failure(
+            !should_retry_with_pairing(&failure(
                 "HTTP/1.1 500 Internal Server Error",
                 &["Server: AirTunes/470.8.1"]
             )),
             "a version string can contain 470"
         );
         assert!(
-            !wants_authentication(&negotiation_failure(
+            !should_retry_with_pairing(&failure(
                 "HTTP/1.1 200 OK",
                 &["Date: Mon, 01 Jan 2024 05:01:03 GMT"]
             )),
@@ -455,20 +448,27 @@ mod auth_fallback_tests {
         );
     }
 
+    /// The point of carrying the code as a number: what an error *says* no
+    /// longer decides anything. A message that happens to quote a retryable
+    /// status line is still not a retry.
     #[test]
-    fn does_not_retry_on_unrelated_failures() {
-        assert!(!wants_authentication("Connection refused (os error 61)"));
-        assert!(!wants_authentication("connection closed while reading"));
-        assert!(!wants_authentication(""));
+    fn does_not_retry_on_untyped_or_unrelated_failures() {
+        assert!(!should_retry_with_pairing(&AirPlayError::Connection(
+            "Connection refused (os error 61)".to_string()
+        )));
+        assert!(!should_retry_with_pairing(&AirPlayError::Negotiation(
+            "POST /stream failed: HTTP/1.1 404 Not Found".to_string()
+        )));
+        assert!(!should_retry_with_pairing(&failure(
+            "garbage without a code",
+            &["Content-Length: 403"]
+        )));
     }
 
     #[test]
-    fn status_code_reads_only_the_first_line() {
-        assert_eq!(
-            status_code("POST /stream failed: HTTP/1.1 404 Not Found\r\nContent-Length: 401"),
-            Some(404)
-        );
-        assert_eq!(status_code("HTTP/1.0 501 Not Implemented"), Some(501));
-        assert_eq!(status_code("Connection refused"), None);
+    fn the_code_travels_as_a_number_and_the_message_is_unchanged() {
+        let err = failure("HTTP/1.1 470 ", &["Content-Length: 32"]);
+        assert!(matches!(err, AirPlayError::HttpStatus { code: 470, .. }));
+        assert_eq!(err.to_string(), "POST /stream failed: HTTP/1.1 470 ");
     }
 }

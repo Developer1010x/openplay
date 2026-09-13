@@ -192,14 +192,12 @@ async fn post_stream(
     // The status has to be read off the first line and nowhere else: the whole
     // header block of a 500 can contain "200" three times over, and treating
     // that as success would hand the caller a failed connection to write video
-    // into. The status line is also what the caller's retry logic parses, so it
-    // has to lead the message.
+    // into. A failure goes back as `AirPlayError::HttpStatus`, carrying the
+    // code as a number, so the caller's retry logic never has to read it out
+    // of a message.
     let (headers, _body) = read_http_response(stream).await?;
     if !status_is_success(&headers) {
-        let status_line = headers.lines().next().unwrap_or("<no status line>");
-        return Err(AirPlayError::Negotiation(format!(
-            "POST /stream failed: {status_line}"
-        )));
+        return Err(http_failure("POST /stream", &headers));
     }
 
     info!("POST /stream accepted — mirror stream active");
@@ -263,27 +261,58 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
-/// Whether a response's **status line** reports success.
+/// Reads the status code off the **first line** of a response, and nowhere
+/// else.
 ///
-/// `headers` is the whole header block, so the status has to be read off the
-/// first line and nowhere else. This was `headers.contains("200")`, which every
-/// one of `Content-Length: 1200`, `Server: AirTunes/200.20` and a `Date`
-/// containing "200" satisfies — so a 500 or a 403 was accepted as a working
-/// mirror session, and the failure surfaced later as an unexplained stall.
+/// `headers` is the whole header block. Headers are full of digits —
+/// `Content-Length: 1401`, `Server: AirTunes/470.8.1`, a `Date` — so any parse
+/// that looks past the first line will eventually read one of them as a
+/// status. `HTTP/1.1 404 Not Found` gives `Some(404)`; a first line that is
+/// not a status line gives `None`.
 ///
-/// `hap_pairing::check_http_status` already parsed the status line correctly;
-/// this is the same parse, kept separate only because the two report failures
-/// differently.
-///
-/// An unparseable first line is not success: if the status cannot be read there
-/// is nothing to justify sending video down the connection.
-fn status_is_success(headers: &str) -> bool {
+/// This is the one status-line parse in the crate. `status_is_success`,
+/// `http_failure` and `hap_pairing::check_http_status` all go through it.
+pub(crate) fn status_code(headers: &str) -> Option<u16> {
     headers
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse::<u16>().ok())
-        .is_some_and(|code| (200..300).contains(&code))
+}
+
+/// Whether a response's **status line** reports success.
+///
+/// This was `headers.contains("200")`, which every one of
+/// `Content-Length: 1200`, `Server: AirTunes/200.20` and a `Date` containing
+/// "200" satisfies — so a 500 or a 403 was accepted as a working mirror
+/// session, and the failure surfaced later as an unexplained stall.
+///
+/// An unparseable first line is not success: if the status cannot be read there
+/// is nothing to justify sending video down the connection.
+pub(crate) fn status_is_success(headers: &str) -> bool {
+    matches!(status_code(headers), Some(200..=299))
+}
+
+/// The error for a response whose status line is not a success.
+///
+/// A readable code becomes [`AirPlayError::HttpStatus`], so the caller can act
+/// on the number. A first line that is not a status line at all stays a plain
+/// [`AirPlayError::Negotiation`]: there is no code to act on, so nothing
+/// downstream should ever treat it as one.
+pub(crate) fn http_failure(request: &'static str, headers: &str) -> AirPlayError {
+    let status_line = headers
+        .lines()
+        .next()
+        .unwrap_or("<no status line>")
+        .to_string();
+    match status_code(headers) {
+        Some(code) => AirPlayError::HttpStatus {
+            request,
+            code,
+            status_line,
+        },
+        None => AirPlayError::Negotiation(format!("{request} failed: {status_line}")),
+    }
 }
 
 fn parse_content_length(headers: &str) -> Option<usize> {
@@ -507,6 +536,54 @@ mod tests {
         ));
         assert!(!status_is_success(
             "HTTP/1.1 501 Not Implemented\r\nContent-Length: 200"
+        ));
+    }
+
+    #[test]
+    fn status_code_reads_only_the_first_line() {
+        assert_eq!(
+            status_code("HTTP/1.1 404 Not Found\r\nContent-Length: 401"),
+            Some(404)
+        );
+        assert_eq!(status_code("HTTP/1.0 501 Not Implemented"), Some(501));
+        assert_eq!(status_code("HTTP/1.1 470 "), Some(470));
+        assert_eq!(status_code("Connection refused"), None);
+        assert_eq!(status_code(""), None);
+    }
+
+    #[test]
+    fn a_failure_becomes_a_typed_error_carrying_the_code() {
+        match http_failure("POST /stream", FIVE_HUNDRED) {
+            AirPlayError::HttpStatus {
+                request,
+                code,
+                status_line,
+            } => {
+                assert_eq!(request, "POST /stream");
+                assert_eq!(code, 500);
+                assert_eq!(status_line, "HTTP/1.1 500 Internal Server Error");
+            }
+            other => panic!("expected HttpStatus, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_message_reads_as_it_always_did() {
+        let err = http_failure(
+            "POST /stream",
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0",
+        );
+        assert_eq!(
+            err.to_string(),
+            "POST /stream failed: HTTP/1.1 404 Not Found"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_status_line_stays_untyped() {
+        assert!(matches!(
+            http_failure("POST /stream", "garbage without a code"),
+            AirPlayError::Negotiation(_)
         ));
     }
 

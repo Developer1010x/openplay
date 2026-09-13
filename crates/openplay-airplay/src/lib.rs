@@ -49,6 +49,25 @@ pub enum AirPlayError {
     #[error("Negotiation failed: {0}")]
     Negotiation(String),
 
+    /// The receiver answered a request with a status line that is not a
+    /// success.
+    ///
+    /// The code travels as a number so callers can decide on it directly.
+    /// The fallback into HAP pairing in `session.rs` matches on `code`; it
+    /// used to parse the code back out of the *text* of a `Negotiation`
+    /// error, which made the message format a contract between two functions
+    /// that nothing enforced. The message reads the same as it did:
+    /// `POST /stream failed: HTTP/1.1 404 Not Found`.
+    #[error("{request} failed: {status_line}")]
+    HttpStatus {
+        /// What was sent, e.g. `POST /stream`.
+        request: &'static str,
+        /// The status code read from the first line of the response.
+        code: u16,
+        /// That first line, verbatim, for the human reading the error.
+        status_line: String,
+    },
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
