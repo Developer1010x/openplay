@@ -31,6 +31,29 @@ impl SenderPipeline {
             capture.node_id,
         )?;
 
+        // `pipewiresrc` hands over whatever the portal negotiated — the pixel
+        // format is the compositor's choice, and a portal stream commonly
+        // advertises a *maximum* framerate rather than a fixed one. Feeding
+        // that straight into a hardware encoder, which accepts only a few
+        // formats, leaves nothing in the intersection and the source gives up:
+        //
+        // ```text
+        // pipewiresrc0: stream error: no more input formats
+        // streaming stopped, reason not-negotiated (-4)
+        // ```
+        //
+        // `videoconvert` widens the acceptable format set to everything raw,
+        // and `videorate` is what actually turns a variable-rate stream into
+        // the fixed framerate the capsfilter below asks for — without it that
+        // filter is a demand the source cannot meet.
+        let videoconvert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .map_err(|e| PipelineError::MissingElement(format!("videoconvert: {e}")))?;
+
+        let videorate = gst::ElementFactory::make("videorate")
+            .build()
+            .map_err(|e| PipelineError::MissingElement(format!("videorate: {e}")))?;
+
         let capsfilter = gst::ElementFactory::make("capsfilter")
             .property(
                 "caps",
@@ -120,6 +143,8 @@ impl SenderPipeline {
         pipeline
             .add_many([
                 &src,
+                &videoconvert,
+                &videorate,
                 &capsfilter,
                 &video_queue,
                 &encoder,
@@ -133,6 +158,8 @@ impl SenderPipeline {
 
         gst::Element::link_many([
             &src,
+            &videoconvert,
+            &videorate,
             &capsfilter,
             &video_queue,
             &encoder,
