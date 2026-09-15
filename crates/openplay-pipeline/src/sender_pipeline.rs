@@ -140,6 +140,41 @@ impl SenderPipeline {
             .build()
             .map_err(|e| PipelineError::MissingElement(format!("webrtcbin: {e}")))?;
 
+        // Diagnostic tap: with OPENPLAY_DUMP_CAPTURE set, report what the
+        // capture source is actually producing, before anything else touches
+        // it. A uniformly green picture at the far end is either a blank
+        // capture or a mangled conversion, and nothing downstream can tell
+        // those apart — the encode/decode chain is provably fine on a
+        // videotestsrc.
+        if std::env::var("OPENPLAY_DUMP_CAPTURE").is_ok() {
+            if let Some(pad) = src.static_pad("src") {
+                let seen = std::sync::atomic::AtomicUsize::new(0);
+                pad.add_probe(gst::PadProbeType::BUFFER, move |_, probe_info| {
+                    let n = seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n < 5 {
+                        if let Some(gst::PadProbeData::Buffer(buf)) = &probe_info.data {
+                            if let Ok(map) = buf.map_readable() {
+                                let d = map.as_slice();
+                                let nonzero = d.iter().filter(|b| **b != 0).count();
+                                let max = d.iter().copied().max().unwrap_or(0);
+                                let sum: u64 = d.iter().map(|b| *b as u64).sum();
+                                tracing::warn!(
+                                    frame = n,
+                                    bytes = d.len(),
+                                    nonzero,
+                                    pct_nonzero = (nonzero * 100) / d.len().max(1),
+                                    max,
+                                    mean = sum / d.len().max(1) as u64,
+                                    "Captured buffer contents"
+                                );
+                            }
+                        }
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            }
+        }
+
         pipeline
             .add_many([
                 &src,
