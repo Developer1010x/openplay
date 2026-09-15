@@ -90,8 +90,55 @@ fn query_primary_display_size() -> (u32, u32) {
 
     #[cfg(target_os = "macos")]
     {
-        // Use CoreGraphics to get display size
-        // If not available at compile time, fall through to default
+        // CoreGraphics, declared directly rather than through a wrapper crate:
+        // six symbols is less to carry than a dependency, and this is the only
+        // place the framework is needed.
+        //
+        // The *pixel* dimensions are what matter. `CGDisplayPixelsWide` reports
+        // points, which on any Retina display is roughly half the real pixel
+        // width — encoding at that size would quietly halve the resolution of
+        // every Mac cast. `CGDisplayModeGetPixelWidth` reports the backing
+        // pixels, so it is tried first and the points API is only a fallback
+        // for the case where the mode cannot be read at all.
+        type CGDirectDisplayID = u32;
+        enum CGDisplayMode {}
+        type CGDisplayModeRef = *mut CGDisplayMode;
+
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGMainDisplayID() -> CGDirectDisplayID;
+            fn CGDisplayPixelsWide(display: CGDirectDisplayID) -> usize;
+            fn CGDisplayPixelsHigh(display: CGDirectDisplayID) -> usize;
+            fn CGDisplayCopyDisplayMode(display: CGDirectDisplayID) -> CGDisplayModeRef;
+            fn CGDisplayModeGetPixelWidth(mode: CGDisplayModeRef) -> usize;
+            fn CGDisplayModeGetPixelHeight(mode: CGDisplayModeRef) -> usize;
+            fn CGDisplayModeRelease(mode: CGDisplayModeRef);
+        }
+
+        // SAFETY: every call takes a display id obtained from CoreGraphics
+        // itself. `CGDisplayCopyDisplayMode` follows the Copy rule, so the mode
+        // it returns is owned here and released on both exits; it is checked
+        // for null first, which is what CoreGraphics returns for a display that
+        // has gone away mid-call.
+        unsafe {
+            let display = CGMainDisplayID();
+
+            let mode = CGDisplayCopyDisplayMode(display);
+            if !mode.is_null() {
+                let w = CGDisplayModeGetPixelWidth(mode);
+                let h = CGDisplayModeGetPixelHeight(mode);
+                CGDisplayModeRelease(mode);
+                if w > 0 && h > 0 {
+                    return (w as u32, h as u32);
+                }
+            }
+
+            let w = CGDisplayPixelsWide(display);
+            let h = CGDisplayPixelsHigh(display);
+            if w > 0 && h > 0 {
+                return (w as u32, h as u32);
+            }
+        }
     }
 
     // Default fallback — GStreamer source will use actual resolution
