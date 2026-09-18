@@ -265,6 +265,7 @@ receiver declined.
 openplay-sender
   --config <path>   Use a custom config file
   --name <name>     Override the display name shown in the window and sent to AirPlay receivers
+  --pick-screen     Forget the remembered screen; the next cast shows the picker again (Linux)
 
 openplay-receiver
   --config <path>   Use a custom config file

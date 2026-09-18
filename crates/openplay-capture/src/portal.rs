@@ -1,8 +1,9 @@
 // This module is Linux-only — screen capture via XDG Desktop Portal + PipeWire.
 #![cfg(target_os = "linux")]
 
+use crate::restore_token;
 use crate::CaptureError;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// The type of display session detected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,12 +38,20 @@ pub struct CaptureSession {
 impl CaptureSession {
     /// Starts a new screen capture session via the XDG Desktop Portal.
     ///
-    /// This will trigger the compositor's screen selection dialog.
-    /// The user must grant permission for screen capture.
+    /// The first time, the compositor shows its screen-selection dialog and
+    /// the user must grant permission. The portal is asked to remember that
+    /// choice, and the token it returns is kept in the data directory (see
+    /// `restore_token.rs`); later sessions hand it back and start without the
+    /// dialog, until the user revokes it or asks for the picker again with
+    /// [`crate::forget_screen_choice`].
     ///
     /// Returns a `CaptureSession` with PipeWire fd and source info.
     pub async fn start() -> Result<Self, CaptureError> {
-        info!("Starting portal screen capture session");
+        let remembered = restore_token::load();
+        info!(
+            remembered_screen = remembered.is_some(),
+            "Starting portal screen capture session"
+        );
 
         let proxy = ashpd::desktop::screencast::Screencast::new()
             .await
@@ -59,8 +68,8 @@ impl CaptureSession {
                 ashpd::desktop::screencast::CursorMode::Embedded,
                 ashpd::desktop::screencast::SourceType::Monitor.into(),
                 false,
-                None,
-                ashpd::desktop::PersistMode::DoNot,
+                remembered.as_deref(),
+                ashpd::desktop::PersistMode::ExplicitlyRevoked,
             )
             .await
             .map_err(|e| CaptureError::Portal(format!("Failed to select sources: {e}")))?;
@@ -77,6 +86,22 @@ impl CaptureSession {
             })?
             .response()
             .map_err(|e| CaptureError::Portal(format!("Failed to get start response: {e}")))?;
+
+        // Keep whatever the portal wants us to hand back next time. A backend
+        // that does not persist returns no token; drop any stale one then, so
+        // the log's `remembered_screen` stays truthful.
+        match response.restore_token() {
+            Some(token) => {
+                if let Err(e) = restore_token::save(token) {
+                    warn!(%e, "Could not remember the screen choice; the picker will show again next time");
+                }
+            }
+            None => match restore_token::clear() {
+                Ok(true) => debug!("Portal returned no restore token; forgot the stale one"),
+                Ok(false) => {}
+                Err(e) => warn!(%e, "Could not remove a stale restore token"),
+            },
+        }
 
         let streams = response.streams();
         if streams.is_empty() {

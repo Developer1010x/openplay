@@ -3,7 +3,7 @@ mod casting;
 mod receiver_list;
 
 use clap::Parser;
-use tracing::info;
+use tracing::{info, warn};
 
 /// OpenPlay — Cast your screen to any AirPlay, Miracast, or OpenPlay receiver.
 #[derive(Parser, Debug)]
@@ -16,6 +16,11 @@ struct Args {
     /// Override the display name shown in the window and sent to AirPlay receivers.
     #[arg(long)]
     name: Option<String>,
+
+    /// Forget the remembered screen, so the next cast shows the screen-selection
+    /// dialog again (Linux; no effect elsewhere).
+    #[arg(long)]
+    pick_screen: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -41,6 +46,14 @@ fn main() -> anyhow::Result<()> {
     config.validate()?;
 
     openplay_common::ensure_dirs()?;
+
+    if args.pick_screen {
+        match openplay_capture::forget_screen_choice() {
+            Ok(true) => info!("Forgot the remembered screen; the next cast will ask again"),
+            Ok(false) => info!("No remembered screen to forget"),
+            Err(e) => warn!(%e, "Could not forget the remembered screen"),
+        }
+    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

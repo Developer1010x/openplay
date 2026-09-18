@@ -42,6 +42,25 @@ ls /usr/libexec/xdg-desktop-portal-*     # or /usr/lib/xdg-desktop-portal-*
 Install `xdg-desktop-portal-gnome`, `-kde` or `-wlr` to match your session. On
 wlroots compositors, `-wlr` needs a config file naming the output to share.
 
+### The picker does not appear, and I want a different screen (Linux)
+
+Expected. The portal is asked to remember the screen you chose, and the token
+it returns is kept in the [data directory](configuration.md#data-directory) as
+`screencast-restore-token`. Every later cast hands it back and starts without
+the dialog. To choose again:
+
+```bash
+openplay-sender --pick-screen
+```
+
+That forgets the token before the window opens, so the next cast asks. Deleting
+the file by hand does the same. A token the portal no longer accepts — after a
+compositor change, or if you revoked it in the desktop's settings — costs one
+dialog, not a failure: the portal shows the picker and returns a fresh token.
+
+`cargo run -p openplay-capture --example portal_probe` starts two sessions in a
+row and reports whether the second one skipped the dialog.
+
 ### Capture fails immediately
 
 ```

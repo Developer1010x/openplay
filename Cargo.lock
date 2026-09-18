@@ -3147,7 +3147,10 @@ name = "openplay-capture"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "openplay-common",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "windows 0.58.0",
 ]
