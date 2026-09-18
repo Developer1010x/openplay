@@ -11,9 +11,18 @@ description = "Screen capture abstraction for OpenPlay — portal on Linux, nati
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
-# XDG Desktop Portal (PipeWire-backed screen capture) — Linux only
+# XDG Desktop Portal (PipeWire-backed screen capture) — Linux only.
+# openplay-common supplies the data directory the restore token is kept in.
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { workspace = true }
+openplay-common = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+# For the portal_probe example, which drives the real desktop portal.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tokio = { workspace = true }
 
 # Win32 display metrics (GetSystemMetrics) — Windows only
 [target.'cfg(target_os = "windows")'.dependencies]
