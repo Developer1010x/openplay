@@ -357,3 +357,7 @@ fixes can go straight to a pull request. No CLA.
 ## License
 
 OpenPlay is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE) for the full text.
+
+---
+
+Built by **S. Prajwall Narayana** · [Portfolio](https://sprajwallnarayana.vercel.app) · [GitHub](https://github.com/Developer1010x)
