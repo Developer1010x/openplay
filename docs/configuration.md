@@ -105,6 +105,7 @@ rather than surfacing later as an opaque GStreamer failure.
 openplay-sender
   --config <path>   Use a custom config file
   --name <name>     Override the display name shown in the window and sent to AirPlay receivers
+  --pick-screen     Forget the remembered screen; the next cast shows the picker again (Linux)
 
 openplay-receiver
   --config <path>   Use a custom config file
@@ -130,9 +131,11 @@ Target names use underscores, matching the crate names.
 ## Data directory
 
 Separate from config on Linux and Windows — on macOS the `directories` crate
-returns the same directory for both. Holds the paired-device database and the
+returns the same directory for both. Holds the paired-device database, the
 receiver's TLS certificate and key, which `CertificateManager::load_or_generate`
-writes there on first launch:
+writes there on first launch, and on Linux `screencast-restore-token` — the
+portal's token for the screen the sender was last allowed to capture, kept so
+the screen-selection dialog appears once rather than on every cast:
 
 - Linux: `$XDG_DATA_HOME/openplay/` (usually `~/.local/share/openplay/`)
 - macOS and Windows: the `directories` crate's data directory for the same
