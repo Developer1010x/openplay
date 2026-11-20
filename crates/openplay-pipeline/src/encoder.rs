@@ -129,12 +129,72 @@ fn platform_encoder_candidates() -> &'static [EncoderType] {
     }
 }
 
+/// Sets an enum-valued property to the first nick the element actually accepts.
+///
+/// `set_property_from_str` panics on an unknown property *and* on a nick the
+/// property's enum does not define, which is not safe for the VA encoders: the
+/// `va` plugin builds `rate-control` as a driver-specific enum — the type is
+/// literally named `GstVaEncoderRateControl_H264_LP_renderD128` — and populates
+/// it from what the hardware reports. A Tiger Lake iGPU offers only `cqp` on
+/// `vah264lpenc`, so the hardcoded `"cbr"` took down the whole cast:
+///
+/// ```text
+/// property 'rate-control' of type 'GstVaH264LPEnc' can't be set from string 'cbr'
+/// ```
+///
+/// `probe_best_encoder` could not have caught it. It instantiates each
+/// candidate, and instantiation succeeds — it is configuring the element that
+/// fails, one step later.
+///
+/// Returns the nick that was set, or `None` if the property is absent or none
+/// of `preferred` is available, in which case the element keeps its default.
+fn set_enum_property(element: &gst::Element, property: &str, preferred: &[&str]) -> Option<String> {
+    let Some(pspec) = element.find_property(property) else {
+        debug!(property, "Encoder has no such property — leaving it unset");
+        return None;
+    };
+
+    let Some(enum_class) = gst::glib::EnumClass::with_type(pspec.value_type()) else {
+        // Not an enum: fall back to the string setter, which is safe now that
+        // the property is known to exist.
+        if let Some(first) = preferred.first() {
+            element.set_property_from_str(property, first);
+            return Some((*first).to_string());
+        }
+        return None;
+    };
+
+    for nick in preferred {
+        if enum_class.value_by_nick(nick).is_some() {
+            element.set_property_from_str(property, nick);
+            debug!(property, nick, "Set encoder property");
+            return Some((*nick).to_string());
+        }
+    }
+
+    let available: Vec<&str> = enum_class
+        .values()
+        .iter()
+        .filter_map(|v| v.nick().into())
+        .collect();
+    warn!(
+        property,
+        wanted = ?preferred,
+        ?available,
+        "Encoder supports none of the preferred values — keeping its default"
+    );
+    None
+}
+
 /// Configures encoder properties for low-latency streaming.
 pub fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, bitrate_kbps: u32) {
     match encoder_type {
         // Both `va` plugin encoders take the same property set.
         EncoderType::VaH264 | EncoderType::VaH264Lp => {
-            encoder.set_property_from_str("rate-control", "cbr");
+            // Constant bitrate is what a live cast wants; a driver that only
+            // offers cqp gets vbr if it has it, and otherwise keeps its default
+            // rather than bringing the cast down.
+            set_enum_property(encoder, "rate-control", &["cbr", "vbr", "cqp"]);
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("key-int-max", 60u32);
             encoder.set_property_from_str("b-frames", "0");
@@ -144,13 +204,13 @@ pub fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, bitr
         EncoderType::VaapiH264 => {
             // The legacy plugin spells these differently to the `va` one and has
             // no target-usage or ref-frames property.
-            encoder.set_property_from_str("rate-control", "cbr");
+            set_enum_property(encoder, "rate-control", &["cbr", "vbr"]);
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("keyframe-period", 60u32);
             encoder.set_property("max-bframes", 0u32);
         }
         EncoderType::NvH264 => {
-            encoder.set_property_from_str("rc-mode", "cbr");
+            set_enum_property(encoder, "rc-mode", &["cbr", "vbr"]);
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("gop-size", 60i32);
             encoder.set_property("bframes", 0u32);
@@ -166,7 +226,7 @@ pub fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, bitr
         EncoderType::MfH264 => {
             // Windows Media Foundation
             encoder.set_property("bitrate", bitrate_kbps * 1000); // MF uses bits/s
-            encoder.set_property_from_str("rc-mode", "cbr");
+            set_enum_property(encoder, "rc-mode", &["cbr", "vbr"]);
             encoder.set_property("low-latency", true);
         }
         EncoderType::X264 => {

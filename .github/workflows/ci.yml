@@ -120,12 +120,32 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # macOS is a target this project claims to support for *casting*, so the
+      # three GStreamer-dependent crates have to be built somewhere. Installing
+      # GStreamer here is what makes that possible; Windows keeps the check
+      # narrow because nobody has claimed a working cast there.
+      - name: Install GStreamer (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gstreamer
+
       - name: Check portable crates
         run: >
           cargo check --locked --all-targets --workspace
           --exclude openplay-pipeline
           --exclude openplay-sender
           --exclude openplay-receiver
+
+      # Compiling is not the same as casting, and this job cannot press a
+      # consent prompt or answer a screen-capture dialog. What it does catch is
+      # the class of breakage that has actually happened here before: a crate
+      # that stops building for a platform nobody compiles for. See #25.
+      - name: Check the GStreamer crates (macOS)
+        if: runner.os == 'macOS'
+        run: >
+          cargo check --locked --all-targets
+          -p openplay-pipeline
+          -p openplay-sender
+          -p openplay-receiver
 
   # `cargo check` on the oldest toolchain this workspace can actually be built
   # with, so a construct that needs a newer compiler cannot land unnoticed. Same

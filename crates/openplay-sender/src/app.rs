@@ -228,11 +228,25 @@ impl SenderApp {
         }
     }
 
+    /// Records a discovered receiver, replacing what was known about it.
+    ///
+    /// The replacement matters: mDNS resolves a service's addresses
+    /// incrementally, so the first event for a receiver routinely carries only
+    /// its link-local addresses and the routable ones arrive in later events
+    /// for the same name. This used to keep the first event and discard every
+    /// update, which left the sender holding a set of `fe80::` addresses —
+    /// undialable, because nothing advertises a zone index and one cannot be
+    /// reconstructed, so connecting fails with `EINVAL` on every one of them.
+    ///
+    /// Each event carries the full set `ServiceInfo::get_addresses` knows at
+    /// the time rather than a delta, so the newest event is the most complete
+    /// and replacing outright is right. The key is the service's fullname and
+    /// does not change between updates, so the row keeps its position in the
+    /// list and a selection on it survives.
     fn add_receiver(&mut self, r: DiscoveredReceiver) {
         let key = r.key();
-        if !self.receivers.contains_key(&key) {
-            self.receiver_keys.push(key.clone());
-            self.receivers.insert(key, r);
+        if self.receivers.insert(key.clone(), r).is_none() {
+            self.receiver_keys.push(key);
         }
     }
 
