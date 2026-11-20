@@ -254,7 +254,12 @@ pub fn build_capture_element(
             .property("fd", pw_fd)
             .property("path", node_id.to_string())
             .property("do-timestamp", true)
-            .property("always-copy", false)
+            // Copy every frame into system memory. Without this the portal can
+            // hand out DMABuf/shared buffers that the CPU-side `videoconvert`
+            // downstream reads as zeros, and all-zero YUV encodes as a solid
+            // green picture at the receiver. One memcpy per frame is cheap
+            // next to the encode.
+            .property("always-copy", true)
             .build()
             .map_err(|e| PipelineError::MissingElement(format!("pipewiresrc: {e}")))
     }
