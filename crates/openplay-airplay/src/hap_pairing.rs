@@ -648,17 +648,12 @@ async fn recv_response(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
 /// when it is set to "Current User" and the caller is not signed into the same
 /// Apple ID. No pairing credential can satisfy that; the setting has to change.
 fn check_http_status(headers: &str) -> anyhow::Result<()> {
-    let status_line = headers
-        .lines()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Empty HTTP response"))?;
+    if headers.lines().next().is_none() {
+        anyhow::bail!("Empty HTTP response");
+    }
 
-    // "HTTP/1.1 403 Forbidden" → 403
-    let code: u16 = match status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|c| c.parse().ok())
-    {
+    // "HTTP/1.1 403 Forbidden" → 403, read off the first line only.
+    let code = match crate::http_session::status_code(headers) {
         Some(c) => c,
         // Not a status line we recognise; let the body parser decide.
         None => return Ok(()),
