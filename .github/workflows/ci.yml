@@ -113,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-2022]
+        os: [macos-15, windows-2022]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
